@@ -221,6 +221,7 @@ export const dict = {
   "common.cancel": "Otkaži",
   "common.connect": "Poveži",
   "common.disconnect": "Prekini vezu",
+  "common.continue": "Pošalji",
   "common.submit": "Pošalji",
   "common.save": "Sačuvaj",
   "common.saving": "Čuvanje...",
@@ -264,7 +265,7 @@ export const dict = {
 
   "prompt.popover.emptyResults": "Nema rezultata",
   "prompt.popover.emptyCommands": "Nema komandi",
-  "prompt.dropzone.label": "Spusti slike ili PDF-ove ovdje",
+  "prompt.dropzone.label": "Ovdje prevucite slike, PDF-ove ili tekstualne datoteke",
   "prompt.dropzone.file.label": "Spusti za @spominjanje datoteke",
   "prompt.slash.badge.custom": "prilagođeno",
   "prompt.slash.badge.skill": "skill",
@@ -280,8 +281,8 @@ export const dict = {
   "prompt.action.stop": "Zaustavi",
   "prompt.editor.title": "Uredi prompt",
 
-  "prompt.toast.pasteUnsupported.title": "Nepodržano lijepljenje",
-  "prompt.toast.pasteUnsupported.description": "Ovdje se mogu zalijepiti samo slike ili PDF-ovi.",
+  "prompt.toast.pasteUnsupported.title": "Nepodržan prilog",
+  "prompt.toast.pasteUnsupported.description": "Ovdje se mogu priložiti samo slike, PDF-ovi ili tekstualne datoteke.",
   "prompt.toast.modelAgentRequired.title": "Odaberi agenta i model",
   "prompt.toast.modelAgentRequired.description": "Odaberi agenta i model prije slanja upita.",
   "prompt.toast.worktreeCreateFailed.title": "Neuspješno kreiranje worktree-a",

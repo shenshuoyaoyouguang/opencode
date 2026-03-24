@@ -8,7 +8,9 @@ export const useSessionHashScroll = (input: {
   sessionID: () => string | undefined
   messagesReady: () => boolean
   visibleUserMessages: () => UserMessage[]
-  renderedUserMessages?: () => UserMessage[]
+  historyMore: () => boolean
+  historyLoading: () => boolean
+  loadMore: (sessionID: string) => Promise<void>
   turnStart: () => number
   currentMessageId: () => string | undefined
   pendingMessage: () => string | undefined
@@ -17,13 +19,11 @@ export const useSessionHashScroll = (input: {
   setTurnStart: (value: number) => void
   autoScroll: { pause: () => void; forceScrollToBottom: () => void }
   scroller: () => HTMLDivElement | undefined
-  seekMessage?: (id: string, behavior: ScrollBehavior) => boolean
   anchor: (id: string) => string
   scheduleScrollState: (el: HTMLDivElement) => void
   consumePendingMessage: (key: string) => string | undefined
 }) => {
   const visibleUserMessages = createMemo(() => input.visibleUserMessages())
-  const renderedUserMessages = createMemo(() => input.renderedUserMessages?.() ?? visibleUserMessages())
   const messageById = createMemo(() => new Map(visibleUserMessages().map((m) => [m.id, m])))
   const messageIndex = createMemo(() => new Map(visibleUserMessages().map((m, i) => [m.id, i])))
   let pendingKey = ""
@@ -77,7 +77,6 @@ export const useSessionHashScroll = (input: {
   }
 
   const seek = (id: string, behavior: ScrollBehavior, left = 4): boolean => {
-    if (input.seekMessage?.(id, behavior)) return true
     const el = document.getElementById(input.anchor(id))
     if (el) return scrollToElement(el, behavior)
     if (left <= 0) return false
@@ -155,7 +154,6 @@ export const useSessionHashScroll = (input: {
     if (!input.sessionID() || !input.messagesReady()) return
 
     visibleUserMessages()
-    renderedUserMessages()
     input.turnStart()
 
     let targetId = input.pendingMessage()
@@ -184,6 +182,21 @@ export const useSessionHashScroll = (input: {
     input.autoScroll.pause()
     cancel()
     queue(() => scrollToMessage(msg, "auto"))
+  })
+
+  createEffect(() => {
+    const sessionID = input.sessionID()
+    if (!sessionID || !input.messagesReady()) return
+
+    visibleUserMessages()
+
+    let targetId = input.pendingMessage()
+    if (!targetId && !clearing) targetId = messageIdFromHash(location.hash)
+    if (!targetId) return
+    if (messageById().has(targetId)) return
+    if (!input.historyMore() || input.historyLoading()) return
+
+    void input.loadMore(sessionID)
   })
 
   onMount(() => {

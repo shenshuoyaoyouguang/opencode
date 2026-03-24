@@ -1,5 +1,6 @@
 import type { Project, UserMessage } from "@opencode-ai/sdk/v2"
 import { useDialog } from "@opencode-ai/ui/context/dialog"
+import { useMutation } from "@tanstack/solid-query"
 import {
   batch,
   onCleanup,
@@ -22,7 +23,6 @@ import { ResizeHandle } from "@opencode-ai/ui/resize-handle"
 import { Select } from "@opencode-ai/ui/select"
 import { Tabs } from "@opencode-ai/ui/tabs"
 import { createAutoScroll } from "@opencode-ai/ui/hooks"
-import type { VirtualizerHandle } from "virtua/solid"
 import { previewSelectedLines } from "@opencode-ai/ui/pierre/selection-bridge"
 import { Button } from "@opencode-ai/ui/button"
 import { showToast } from "@opencode-ai/ui/toast"
@@ -41,11 +41,17 @@ import { useSync } from "@/context/sync"
 import { useTerminal } from "@/context/terminal"
 import { type FollowupDraft, sendFollowupDraft } from "@/components/prompt-input/submit"
 import { createSessionComposerState, SessionComposerRegion } from "@/pages/session/composer"
-import { createOpenReviewFile, createSessionTabs, createSizing, focusTerminalById } from "@/pages/session/helpers"
+import {
+  createOpenReviewFile,
+  createSessionTabs,
+  createSizing,
+  focusTerminalById,
+  shouldFocusTerminalOnKeyDown,
+} from "@/pages/session/helpers"
 import { MessageTimeline } from "@/pages/session/message-timeline"
 import { type DiffStyle, SessionReviewTab, type SessionReviewTabProps } from "@/pages/session/review-tab"
 import { useSessionLayout } from "@/pages/session/session-layout"
-import { resetSessionModel, syncSessionModel } from "@/pages/session/session-model-helpers"
+import { syncSessionModel } from "@/pages/session/session-model-helpers"
 import { SessionSidePanel } from "@/pages/session/session-side-panel"
 import { TerminalPanel } from "@/pages/session/terminal-panel"
 import { useSessionCommands } from "@/pages/session/use-session-commands"
@@ -56,7 +62,6 @@ import { same } from "@/utils/same"
 import { formatServerError } from "@/utils/server-errors"
 
 const emptyUserMessages: UserMessage[] = []
-const scrollBottomThreshold = 16
 const emptyFollowups: (FollowupDraft & { id: string })[] = []
 
 type SessionHistoryWindowInput = {
@@ -69,7 +74,6 @@ type SessionHistoryWindowInput = {
   loadMore: (sessionID: string) => Promise<void>
   userScrolled: () => boolean
   scroller: () => HTMLDivElement | undefined
-  virtualized: () => boolean
 }
 
 /**
@@ -85,12 +89,6 @@ function createSessionHistoryWindow(input: SessionHistoryWindowInput) {
   const turnPrefetchBuffer = 16
   const prefetchCooldownMs = 400
   const prefetchNoGrowthLimit = 2
-  const turnBottomThreshold = 24
-
-  let prevTop = 0
-  let preserveA: number | undefined
-  let preserveB: number | undefined
-  let preserving = false
 
   const [state, setState] = createStore({
     turnID: undefined as string | undefined,
@@ -134,39 +132,19 @@ function createSessionHistoryWindow(input: SessionHistoryWindowInput) {
     },
   )
 
-  const clearPreserve = () => {
-    if (preserveA !== undefined) cancelAnimationFrame(preserveA)
-    if (preserveB !== undefined) cancelAnimationFrame(preserveB)
-    preserveA = undefined
-    preserveB = undefined
-    preserving = false
-  }
-
   const preserveScroll = (fn: () => void) => {
-    if (input.virtualized()) {
-      fn()
-      return
-    }
-
     const el = input.scroller()
     if (!el) {
       fn()
       return
     }
-
-    clearPreserve()
-    preserving = true
     const beforeTop = el.scrollTop
     const beforeHeight = el.scrollHeight
     fn()
-    preserveA = requestAnimationFrame(() => {
-      preserveA = undefined
-      preserveB = requestAnimationFrame(() => {
-        preserveB = undefined
-        const delta = el.scrollHeight - beforeHeight
-        if (delta) el.scrollTop = beforeTop + delta
-        preserving = false
-      })
+    requestAnimationFrame(() => {
+      const delta = el.scrollHeight - beforeHeight
+      if (!delta) return
+      el.scrollTop = beforeTop + delta
     })
   }
 
@@ -268,30 +246,26 @@ function createSessionHistoryWindow(input: SessionHistoryWindowInput) {
 
     if (added <= 0) return
     if (growth <= 0) return
+
+    if (opts?.prefetch) {
+      const current = turnStart()
+      preserveScroll(() => setTurnStart(current + growth))
+      return
+    }
+
     if (turnStart() !== start) return
 
-    const reveal = !opts?.prefetch
     const currentRendered = renderedUserMessages().length
     const base = Math.max(beforeRendered, currentRendered)
-    const target = reveal ? Math.min(afterVisible, base + turnBatch) : base
-    const nextStart = Math.max(0, afterVisible - target)
-    preserveScroll(() => setTurnStart(nextStart))
+    const target = Math.min(afterVisible, base + turnBatch)
+    preserveScroll(() => setTurnStart(Math.max(0, afterVisible - target)))
   }
 
   const onScrollerScroll = () => {
     if (!input.userScrolled()) return
-    if (preserving) return
     const el = input.scroller()
     if (!el) return
-
-    const top = el.scrollTop
-    const max = Math.max(0, el.scrollHeight - el.clientHeight)
-    const down = top > prevTop
-    prevTop = top
-
-    if (max - top <= turnBottomThreshold) return
-    if (down) return
-    if (top >= turnScrollThreshold) return
+    if (el.scrollTop >= turnScrollThreshold) return
 
     const start = turnStart()
     if (start > 0) {
@@ -309,8 +283,6 @@ function createSessionHistoryWindow(input: SessionHistoryWindowInput) {
     on(
       input.sessionID,
       () => {
-        prevTop = 0
-        clearPreserve()
         setState({ prefetchUntil: 0, prefetchNoGrowth: 0 })
       },
       { defer: true },
@@ -367,10 +339,7 @@ export default function Page() {
   })
 
   const [ui, setUi] = createStore({
-    git: false,
     pendingMessage: undefined as string | undefined,
-    restoring: undefined as string | undefined,
-    reverting: false,
     reviewSnap: false,
     scrollGesture: 0,
     scroll: {
@@ -530,7 +499,7 @@ export default function Page() {
       (next, prev) => {
         if (!prev) return
         if (next.dir === prev.dir && next.id === prev.id) return
-        if (!next.id) resetSessionModel(local)
+        if (prev.id && !next.id) local.session.reset()
       },
       { defer: true },
     ),
@@ -546,7 +515,6 @@ export default function Page() {
 
   const [followup, setFollowup] = createStore({
     items: {} as Record<string, (FollowupDraft & { id: string })[] | undefined>,
-    sending: {} as Record<string, string | undefined>,
     failed: {} as Record<string, string | undefined>,
     paused: {} as Record<string, boolean | undefined>,
     edit: {} as Record<
@@ -591,10 +559,7 @@ export default function Page() {
   const newSessionWorktree = createMemo(() => {
     if (store.newSessionWorktree === "create") return "create"
     const project = sync.project
-    const directory = sdk.directory
-    if (project && directory && directory.trim() !== "" && directory !== project.worktree) {
-      return directory
-    }
+    if (project && sdk.directory !== project.worktree) return sdk.directory
     return "main"
   })
 
@@ -687,25 +652,24 @@ export default function Page() {
     globalSync.set("project", [...list, next])
   }
 
+  const gitMutation = useMutation(() => ({
+    mutationFn: () => sdk.client.project.initGit(),
+    onSuccess: (x) => {
+      if (!x.data) return
+      upsert(x.data)
+    },
+    onError: (err) => {
+      showToast({
+        variant: "error",
+        title: language.t("common.requestFailed"),
+        description: formatServerError(err, language.t),
+      })
+    },
+  }))
+
   function initGit() {
-    if (ui.git) return
-    setUi("git", true)
-    void sdk.client.project
-      .initGit()
-      .then((x) => {
-        if (!x.data) return
-        upsert(x.data)
-      })
-      .catch((err) => {
-        showToast({
-          variant: "error",
-          title: language.t("common.requestFailed"),
-          description: formatServerError(err, language.t),
-        })
-      })
-      .finally(() => {
-        setUi("git", false)
-      })
+    if (gitMutation.isPending) return
+    gitMutation.mutate()
   }
 
   let inputRef!: HTMLDivElement
@@ -897,7 +861,7 @@ export default function Page() {
     // Prefer the open terminal over the composer when it can take focus
     if (view().terminal.opened()) {
       const id = terminal.active()
-      if (id && focusTerminalById(id)) return
+      if (id && shouldFocusTerminalOnKeyDown(event) && focusTerminalById(id)) return
     }
 
     // Only treat explicit scroll keys as potential "user scroll" gestures.
@@ -1004,8 +968,8 @@ export default function Page() {
               {language.t("session.review.noVcs.createGit.description")}
             </div>
           </div>
-          <Button size="large" disabled={ui.git} onClick={initGit}>
-            {ui.git
+          <Button size="large" disabled={gitMutation.isPending} onClick={initGit}>
+            {gitMutation.isPending
               ? language.t("session.review.noVcs.createGit.actionLoading")
               : language.t("session.review.noVcs.createGit.action")}
           </Button>
@@ -1220,8 +1184,6 @@ export default function Page() {
     on(
       () => sdk.directory,
       () => {
-        void file.tree.list("")
-
         const tab = activeFileTab()
         if (!tab) return
         const path = file.pathFromTab(tab)
@@ -1235,7 +1197,6 @@ export default function Page() {
   const autoScroll = createAutoScroll({
     working: () => true,
     overflowAnchor: "dynamic",
-    bottomThreshold: scrollBottomThreshold,
   })
 
   let scrollStateFrame: number | undefined
@@ -1245,7 +1206,7 @@ export default function Page() {
   const updateScrollState = (el: HTMLDivElement) => {
     const max = el.scrollHeight - el.clientHeight
     const overflow = max > 1
-    const bottom = !overflow || max - el.scrollTop <= scrollBottomThreshold
+    const bottom = !overflow || el.scrollTop >= max - 2
 
     if (ui.scroll.overflow === overflow && ui.scroll.bottom === bottom) return
     setUi("scroll", { overflow, bottom })
@@ -1288,22 +1249,7 @@ export default function Page() {
     ),
   )
 
-  createEffect(
-    on(
-      sessionKey,
-      (_next, prev) => {
-        if (!prev) return
-        const id = store.messageId
-        if (!id) return
-        layout.pendingMessage.set(prev, id)
-      },
-      { defer: true },
-    ),
-  )
-
   let fill = () => {}
-  let virtualizer: VirtualizerHandle | undefined
-  let virtualized = false
 
   const setScrollRef = (el: HTMLDivElement | undefined) => {
     scroller = el
@@ -1336,7 +1282,6 @@ export default function Page() {
     loadMore: (sessionID) => sync.session.history.loadMore(sessionID),
     userScrolled: autoScroll.userScrolled,
     scroller: () => scroller,
-    virtualized: () => virtualized,
   })
 
   fill = () => {
@@ -1439,10 +1384,40 @@ export default function Page() {
     return followup.edit[id]
   })
 
+  const followupMutation = useMutation(() => ({
+    mutationFn: async (input: { sessionID: string; id: string; manual?: boolean }) => {
+      const item = (followup.items[input.sessionID] ?? []).find((entry) => entry.id === input.id)
+      if (!item) return
+
+      if (input.manual) setFollowup("paused", input.sessionID, undefined)
+      setFollowup("failed", input.sessionID, undefined)
+
+      const ok = await sendFollowupDraft({
+        client: sdk.client,
+        sync,
+        globalSync,
+        draft: item,
+        optimisticBusy: item.sessionDirectory === sdk.directory,
+      }).catch((err) => {
+        setFollowup("failed", input.sessionID, input.id)
+        fail(err)
+        return false
+      })
+      if (!ok) return
+
+      setFollowup("items", input.sessionID, (items) => (items ?? []).filter((entry) => entry.id !== input.id))
+      if (input.manual) resumeScroll()
+    },
+  }))
+
+  const followupBusy = (sessionID: string) =>
+    followupMutation.isPending && followupMutation.variables?.sessionID === sessionID
+
   const sendingFollowup = createMemo(() => {
     const id = params.id
     if (!id) return
-    return followup.sending[id]
+    if (!followupBusy(id)) return
+    return followupMutation.variables?.id
   })
 
   const queueEnabled = createMemo(() => {
@@ -1482,37 +1457,15 @@ export default function Page() {
   const sendFollowup = (sessionID: string, id: string, opts?: { manual?: boolean }) => {
     const item = (followup.items[sessionID] ?? []).find((entry) => entry.id === id)
     if (!item) return Promise.resolve()
-    if (followup.sending[sessionID]) return Promise.resolve()
+    if (followupBusy(sessionID)) return Promise.resolve()
 
-    if (opts?.manual) setFollowup("paused", sessionID, undefined)
-    setFollowup("sending", sessionID, id)
-    setFollowup("failed", sessionID, undefined)
-
-    return sendFollowupDraft({
-      client: sdk.client,
-      sync,
-      globalSync,
-      draft: item,
-      optimisticBusy: item.sessionDirectory === sdk.directory,
-    })
-      .then((ok) => {
-        if (ok === false) return
-        setFollowup("items", sessionID, (items) => (items ?? []).filter((entry) => entry.id !== id))
-        if (opts?.manual) resumeScroll()
-      })
-      .catch((err) => {
-        setFollowup("failed", sessionID, id)
-        fail(err)
-      })
-      .finally(() => {
-        setFollowup("sending", sessionID, (value) => (value === id ? undefined : value))
-      })
+    return followupMutation.mutateAsync({ sessionID, id, manual: opts?.manual })
   }
 
   const editFollowup = (id: string) => {
     const sessionID = params.id
     if (!sessionID) return
-    if (followup.sending[sessionID]) return
+    if (followupBusy(sessionID)) return
 
     const item = queuedFollowups().find((entry) => entry.id === id)
     if (!item) return
@@ -1535,8 +1488,77 @@ export default function Page() {
   const halt = (sessionID: string) =>
     busy(sessionID) ? sdk.client.session.abort({ sessionID }).catch(() => {}) : Promise.resolve()
 
+  const revertMutation = useMutation(() => ({
+    mutationFn: async (input: { sessionID: string; messageID: string }) => {
+      const prev = prompt.current().slice()
+      const last = info()?.revert
+      const value = draft(input.messageID)
+      batch(() => {
+        roll(input.sessionID, { messageID: input.messageID })
+        prompt.set(value)
+      })
+      await halt(input.sessionID)
+        .then(() => sdk.client.session.revert(input))
+        .then((result) => {
+          if (result.data) merge(result.data)
+        })
+        .catch((err) => {
+          batch(() => {
+            roll(input.sessionID, last)
+            prompt.set(prev)
+          })
+          fail(err)
+        })
+    },
+  }))
+
+  const restoreMutation = useMutation(() => ({
+    mutationFn: async (id: string) => {
+      const sessionID = params.id
+      if (!sessionID) return
+
+      const next = userMessages().find((item) => item.id > id)
+      const prev = prompt.current().slice()
+      const last = info()?.revert
+
+      batch(() => {
+        roll(sessionID, next ? { messageID: next.id } : undefined)
+        if (next) {
+          prompt.set(draft(next.id))
+          return
+        }
+        prompt.reset()
+      })
+
+      const task = !next
+        ? halt(sessionID).then(() => sdk.client.session.unrevert({ sessionID }))
+        : halt(sessionID).then(() =>
+            sdk.client.session.revert({
+              sessionID,
+              messageID: next.id,
+            }),
+          )
+
+      await task
+        .then((result) => {
+          if (result.data) merge(result.data)
+        })
+        .catch((err) => {
+          batch(() => {
+            roll(sessionID, last)
+            prompt.set(prev)
+          })
+          fail(err)
+        })
+    },
+  }))
+
+  const reverting = createMemo(() => revertMutation.isPending || restoreMutation.isPending)
+  const restoring = createMemo(() => (restoreMutation.isPending ? restoreMutation.variables : undefined))
+
   const fork = (input: { sessionID: string; messageID: string }) => {
     const value = draft(input.messageID)
+    const dir = base64Encode(sdk.directory)
     return sdk.client.session
       .fork(input)
       .then((result) => {
@@ -1548,86 +1570,20 @@ export default function Page() {
           })
           return
         }
-        navigate(`/${base64Encode(sdk.directory)}/session/${next.id}`)
-        requestAnimationFrame(() => {
-          prompt.set(value)
-        })
+        prompt.set(value, undefined, { dir, id: next.id })
+        navigate(`/${dir}/session/${next.id}`)
       })
       .catch(fail)
   }
 
   const revert = (input: { sessionID: string; messageID: string }) => {
-    if (ui.reverting || ui.restoring) return
-    const prev = prompt.current().slice()
-    const last = info()?.revert
-    const value = draft(input.messageID)
-    batch(() => {
-      setUi("reverting", true)
-      roll(input.sessionID, { messageID: input.messageID })
-      prompt.set(value)
-    })
-    return halt(input.sessionID)
-      .then(() => sdk.client.session.revert(input))
-      .then((result) => {
-        if (result.data) merge(result.data)
-      })
-      .catch((err) => {
-        batch(() => {
-          roll(input.sessionID, last)
-          prompt.set(prev)
-        })
-        fail(err)
-      })
-      .finally(() => {
-        setUi("reverting", false)
-      })
+    if (reverting()) return
+    return revertMutation.mutateAsync(input)
   }
 
   const restore = (id: string) => {
-    const sessionID = params.id
-    if (!sessionID || ui.restoring || ui.reverting) return
-
-    const next = userMessages().find((item) => item.id > id)
-    const prev = prompt.current().slice()
-    const last = info()?.revert
-
-    batch(() => {
-      setUi("restoring", id)
-      setUi("reverting", true)
-      roll(sessionID, next ? { messageID: next.id } : undefined)
-      if (next) {
-        prompt.set(draft(next.id))
-        return
-      }
-      prompt.reset()
-    })
-
-    const task = !next
-      ? halt(sessionID).then(() => sdk.client.session.unrevert({ sessionID }))
-      : halt(sessionID).then(() =>
-          sdk.client.session.revert({
-            sessionID,
-            messageID: next.id,
-          }),
-        )
-
-    return task
-      .then((result) => {
-        if (result.data) merge(result.data)
-      })
-      .catch((err) => {
-        batch(() => {
-          roll(sessionID, last)
-          prompt.set(prev)
-        })
-        fail(err)
-      })
-      .finally(() => {
-        batch(() => {
-          setUi("restoring", (value) => (value === id ? undefined : value))
-          setUi("reverting", false)
-        })
-      })
+    if (!params.id || reverting()) return
+    return restoreMutation.mutateAsync(id)
   }
 
   const rolled = createMemo(() => {
@@ -1646,7 +1602,7 @@ export default function Page() {
 
     const item = queuedFollowups()[0]
     if (!item) return
-    if (followup.sending[sessionID]) return
+    if (followupBusy(sessionID)) return
     if (followup.failed[sessionID] === item.id) return
     if (followup.paused[sessionID]) return
     if (composer.blocked()) return
@@ -1664,18 +1620,13 @@ export default function Page() {
 
       const el = scroller
       const delta = next - dockHeight
-      const gap = el ? el.scrollHeight - el.clientHeight - el.scrollTop : 0
-      const stick = el ? !autoScroll.userScrolled() || gap <= scrollBottomThreshold + Math.max(0, delta) : false
+      const stick = el
+        ? !autoScroll.userScrolled() || el.scrollHeight - el.clientHeight - el.scrollTop < 10 + Math.max(0, delta)
+        : false
 
       dockHeight = next
 
-      if (el && stick) {
-        requestAnimationFrame(() => {
-          if (scroller !== el) return
-          const top = el.scrollHeight - el.clientHeight - gap
-          el.scrollTop = top > 0 ? top : 0
-        })
-      }
+      if (stick) autoScroll.forceScrollToBottom()
 
       if (el) scheduleScrollState(el)
       fill()
@@ -1687,7 +1638,9 @@ export default function Page() {
     sessionID: () => params.id,
     messagesReady,
     visibleUserMessages,
-    renderedUserMessages: historyWindow.renderedUserMessages,
+    historyMore,
+    historyLoading,
+    loadMore: (sessionID) => sync.session.history.loadMore(sessionID),
     turnStart: historyWindow.turnStart,
     currentMessageId: () => store.messageId,
     pendingMessage: () => ui.pendingMessage,
@@ -1696,17 +1649,6 @@ export default function Page() {
     setTurnStart: historyWindow.setTurnStart,
     autoScroll,
     scroller: () => scroller,
-    seekMessage: (id, behavior) => {
-      const msgs = visibleUserMessages()
-      const index = msgs.findIndex((m) => m.id === id)
-      if (index < 0) return false
-      if (!virtualizer) return false
-      virtualizer.scrollToIndex(index, {
-        align: "start",
-        smooth: behavior === "smooth",
-      })
-      return true
-    },
     anchor,
     scheduleScrollState,
     consumePendingMessage: layout.pendingMessage.consume,
@@ -1770,7 +1712,7 @@ export default function Page() {
           <div class="flex-1 min-h-0 overflow-hidden">
             <Switch>
               <Match when={params.id}>
-                <Show when={lastUserMessage()}>
+                <Show when={messagesReady()}>
                   <MessageTimeline
                     mobileChanges={mobileChanges()}
                     mobileFallback={reviewContent({
@@ -1795,19 +1737,12 @@ export default function Page() {
                     onTurnBackfillScroll={historyWindow.onScrollerScroll}
                     onAutoScrollInteraction={autoScroll.handleInteraction}
                     centered={centered()}
-                    scrollRef={() => scroller}
-                    onVirtualizedChange={(value) => {
-                      virtualized = value
-                    }}
                     setContentRef={(el) => {
                       content = el
                       autoScroll.contentRef(el)
 
                       const root = scroller
                       if (root) scheduleScrollState(root)
-                    }}
-                    setVirtualizerRef={(handle) => {
-                      virtualizer = handle
                     }}
                     turnStart={historyWindow.turnStart()}
                     historyMore={historyMore()}
@@ -1839,9 +1774,6 @@ export default function Page() {
               comments.clear()
               resumeScroll()
             }}
-            onSubmitted={() => {
-              resumeScroll()
-            }}
             onResponseSubmit={resumeScroll}
             followup={
               params.id
@@ -1868,8 +1800,8 @@ export default function Page() {
               rolled().length > 0
                 ? {
                     items: rolled(),
-                    restoring: ui.restoring,
-                    disabled: ui.reverting,
+                    restoring: restoring(),
+                    disabled: reverting(),
                     onRestore: restore,
                   }
                 : undefined

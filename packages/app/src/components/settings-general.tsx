@@ -1,28 +1,41 @@
-import { Component, Show, createEffect, createMemo, createResource, type JSX } from "solid-js"
+import { Component, Show, createMemo, createResource, onMount, type JSX } from "solid-js"
 import { createStore } from "solid-js/store"
 import { Button } from "@opencode-ai/ui/button"
 import { Icon } from "@opencode-ai/ui/icon"
 import { Select } from "@opencode-ai/ui/select"
 import { Switch } from "@opencode-ai/ui/switch"
-import { TextField } from "@opencode-ai/ui/text-field"
 import { Tooltip } from "@opencode-ai/ui/tooltip"
-import { useTheme, type ColorScheme } from "@opencode-ai/ui/theme"
+import { useTheme, type ColorScheme } from "@opencode-ai/ui/theme/context"
 import { showToast } from "@opencode-ai/ui/toast"
 import { useLanguage } from "@/context/language"
-import { type OpenclawConfig, usePlatform } from "@/context/platform"
+import { usePlatform } from "@/context/platform"
 import { useSettings, monoFontFamily } from "@/context/settings"
-import { playSound, SOUND_OPTIONS } from "@/utils/sound"
+import { playSoundById, SOUND_OPTIONS } from "@/utils/sound"
 import { Link } from "./link"
 import { SettingsList } from "./settings-list"
 
 let demoSoundState = {
   cleanup: undefined as (() => void) | undefined,
   timeout: undefined as NodeJS.Timeout | undefined,
+  run: 0,
+}
+
+type ThemeOption = {
+  id: string
+  name: string
+}
+
+let font: Promise<typeof import("@opencode-ai/ui/font-loader")> | undefined
+
+function loadFont() {
+  font ??= import("@opencode-ai/ui/font-loader")
+  return font
 }
 
 // To prevent audio from overlapping/playing very quickly when navigating the settings menus,
 // delay the playback by 100ms during quick selection changes and pause existing sounds.
 const stopDemoSound = () => {
+  demoSoundState.run += 1
   if (demoSoundState.cleanup) {
     demoSoundState.cleanup()
   }
@@ -30,12 +43,19 @@ const stopDemoSound = () => {
   demoSoundState.cleanup = undefined
 }
 
-const playDemoSound = (src: string | undefined) => {
+const playDemoSound = (id: string | undefined) => {
   stopDemoSound()
-  if (!src) return
+  if (!id) return
 
+  const run = ++demoSoundState.run
   demoSoundState.timeout = setTimeout(() => {
-    demoSoundState.cleanup = playSound(src)
+    void playSoundById(id).then((cleanup) => {
+      if (demoSoundState.run !== run) {
+        cleanup?.()
+        return
+      }
+      demoSoundState.cleanup = cleanup
+    })
   }, 100)
 }
 
@@ -45,47 +65,15 @@ export const SettingsGeneral: Component = () => {
   const platform = usePlatform()
   const settings = useSettings()
 
+  onMount(() => {
+    void theme.loadThemes()
+  })
+
   const [store, setStore] = createStore({
     checking: false,
   })
 
   const linux = createMemo(() => platform.platform === "desktop" && platform.os === "linux")
-  const desktop = createMemo(() => platform.platform === "desktop")
-  const [openclaw] = createResource(async () => platform.getOpenclawConfig?.())
-  const [openclawForm, setOpenclawForm] = createStore({
-    enabled: false,
-    url: "",
-    token: "",
-  })
-  let openclawSave: ReturnType<typeof setTimeout> | undefined
-
-  const syncOpenclaw = (next?: OpenclawConfig) => {
-    setOpenclawForm({
-      enabled: next?.enabled ?? false,
-      url: next?.url ?? "",
-      token: next?.token ?? "",
-    })
-  }
-
-  createEffect(() => syncOpenclaw(openclaw.latest))
-
-  const saveOpenclaw = async (patch?: Partial<typeof openclawForm>) => {
-    if (!platform.setOpenclawConfig) return
-    const next = {
-      enabled: patch?.enabled ?? openclawForm.enabled,
-      url: (patch?.url ?? openclawForm.url).trim() || undefined,
-      token: (patch?.token ?? openclawForm.token).trim() || undefined,
-    }
-    await platform.setOpenclawConfig(next)
-    syncOpenclaw(next)
-  }
-
-  const saveOpenclawLater = (patch?: Partial<typeof openclawForm>) => {
-    clearTimeout(openclawSave)
-    openclawSave = setTimeout(() => {
-      void saveOpenclaw(patch)
-    }, 250)
-  }
 
   const check = () => {
     if (!platform.checkUpdate) return
@@ -141,9 +129,7 @@ export const SettingsGeneral: Component = () => {
       .finally(() => setStore("checking", false))
   }
 
-  const themeOptions = createMemo(() =>
-    Object.entries(theme.themes()).map(([id, def]) => ({ id, name: def.name ?? id })),
-  )
+  const themeOptions = createMemo<ThemeOption[]>(() => theme.ids().map((id) => ({ id, name: theme.name(id) })))
 
   const colorSchemeOptions = createMemo((): { value: ColorScheme; label: string }[] => [
     { value: "system", label: language.t("theme.scheme.system") },
@@ -180,7 +166,7 @@ export const SettingsGeneral: Component = () => {
   ] as const
   const fontOptionsList = [...fontOptions]
 
-  const noneSound = { id: "none", label: "sound.option.none", src: undefined } as const
+  const noneSound = { id: "none", label: "sound.option.none" } as const
   const soundOptions = [noneSound, ...SOUND_OPTIONS]
 
   const soundSelectProps = (
@@ -195,7 +181,7 @@ export const SettingsGeneral: Component = () => {
     label: (o: (typeof soundOptions)[number]) => language.t(o.label),
     onHighlight: (option: (typeof soundOptions)[number] | undefined) => {
       if (!option) return
-      playDemoSound(option.src)
+      playDemoSound(option.id === "none" ? undefined : option.id)
     },
     onSelect: (option: (typeof soundOptions)[number] | undefined) => {
       if (!option) return
@@ -206,7 +192,7 @@ export const SettingsGeneral: Component = () => {
       }
       setEnabled(true)
       set(option.id)
-      playDemoSound(option.src)
+      playDemoSound(option.id)
     },
     variant: "secondary" as const,
     size: "small" as const,
@@ -358,6 +344,9 @@ export const SettingsGeneral: Component = () => {
             current={fontOptionsList.find((o) => o.value === settings.appearance.font())}
             value={(o) => o.value}
             label={(o) => language.t(o.label)}
+            onHighlight={(option) => {
+              void loadFont().then((x) => x.ensureMonoFont(option?.value))
+            }}
             onSelect={(option) => option && settings.appearance.setFont(option.value)}
             variant="secondary"
             size="small"
@@ -370,140 +359,6 @@ export const SettingsGeneral: Component = () => {
               </span>
             )}
           </Select>
-        </SettingsRow>
-      </SettingsList>
-    </div>
-  )
-
-  const FeedSection = () => (
-    <div class="flex flex-col gap-1">
-      <h3 class="text-14-medium text-text-strong pb-2">{language.t("settings.general.section.feed")}</h3>
-
-      <SettingsList>
-        <SettingsRow
-          title={language.t("settings.general.row.fontSize.title")}
-          description={language.t("settings.general.row.fontSize.description")}
-        >
-          <div class="flex items-center gap-2">
-            <Button
-              variant="secondary"
-              size="small"
-              onClick={() => {
-                const size = settings.appearance.fontSize()
-                if (size > 10) settings.appearance.setFontSize(size - 1)
-              }}
-              disabled={settings.appearance.fontSize() <= 10}
-              aria-label={language.t("settings.general.row.fontSize.decrease")}
-            >
-              -
-            </Button>
-            <span class="text-14-regular text-text-strong min-w-[48px] text-center">
-              {settings.appearance.fontSize()}px
-            </span>
-            <Button
-              variant="secondary"
-              size="small"
-              onClick={() => {
-                const size = settings.appearance.fontSize()
-                if (size < 24) settings.appearance.setFontSize(size + 1)
-              }}
-              disabled={settings.appearance.fontSize() >= 24}
-              aria-label={language.t("settings.general.row.fontSize.increase")}
-            >
-              +
-            </Button>
-          </div>
-        </SettingsRow>
-
-        <SettingsRow
-          title={language.t("settings.general.row.contentWidth.title")}
-          description={language.t("settings.general.row.contentWidth.description")}
-        >
-          <div class="flex items-center gap-2">
-            <Button
-              variant="secondary"
-              size="small"
-              onClick={() => {
-                const width = settings.appearance.contentWidth()
-                const opts = [200, 250, 300, 350, 400]
-                const idx = opts.indexOf(width)
-                if (idx > 0) settings.appearance.setContentWidth(opts[idx - 1])
-              }}
-              disabled={settings.appearance.contentWidth() <= 200}
-              aria-label={language.t("settings.general.row.contentWidth.decrease")}
-            >
-              -
-            </Button>
-            <span class="text-14-regular text-text-strong min-w-[80px] text-center">
-              {settings.appearance.contentWidth() === 200 && language.t("settings.general.row.contentWidth.narrow")}
-              {settings.appearance.contentWidth() === 250 && language.t("settings.general.row.contentWidth.medium")}
-              {settings.appearance.contentWidth() === 300 && language.t("settings.general.row.contentWidth.wide")}
-              {settings.appearance.contentWidth() === 350 && language.t("settings.general.row.contentWidth.extraWide")}
-              {settings.appearance.contentWidth() === 400 && language.t("settings.general.row.contentWidth.fullWidth")}
-            </span>
-            <Button
-              variant="secondary"
-              size="small"
-              onClick={() => {
-                const width = settings.appearance.contentWidth()
-                const opts = [200, 250, 300, 350, 400]
-                const idx = opts.indexOf(width)
-                if (idx >= 0 && idx < opts.length - 1) settings.appearance.setContentWidth(opts[idx + 1])
-              }}
-              disabled={settings.appearance.contentWidth() >= 400}
-              aria-label={language.t("settings.general.row.contentWidth.increase")}
-            >
-              +
-            </Button>
-          </div>
-        </SettingsRow>
-
-        <SettingsRow
-          title={language.t("settings.general.row.reasoningSummaries.title")}
-          description={language.t("settings.general.row.reasoningSummaries.description")}
-        >
-          <div data-action="settings-feed-reasoning-summaries">
-            <Switch
-              checked={settings.general.showReasoningSummaries()}
-              onChange={(checked) => settings.general.setShowReasoningSummaries(checked)}
-            />
-          </div>
-        </SettingsRow>
-
-        <SettingsRow
-          title={language.t("settings.general.row.customHookParts.title")}
-          description={language.t("settings.general.row.customHookParts.description")}
-        >
-          <div data-action="settings-feed-custom-hook-parts">
-            <Switch
-              checked={settings.general.showCustomHookParts()}
-              onChange={(checked) => settings.general.setShowCustomHookParts(checked)}
-            />
-          </div>
-        </SettingsRow>
-
-        <SettingsRow
-          title={language.t("settings.general.row.shellToolPartsExpanded.title")}
-          description={language.t("settings.general.row.shellToolPartsExpanded.description")}
-        >
-          <div data-action="settings-feed-shell-tool-parts-expanded">
-            <Switch
-              checked={settings.general.shellToolPartsExpanded()}
-              onChange={(checked) => settings.general.setShellToolPartsExpanded(checked)}
-            />
-          </div>
-        </SettingsRow>
-
-        <SettingsRow
-          title={language.t("settings.general.row.editToolPartsExpanded.title")}
-          description={language.t("settings.general.row.editToolPartsExpanded.description")}
-        >
-          <div data-action="settings-feed-edit-tool-parts-expanded">
-            <Switch
-              checked={settings.general.editToolPartsExpanded()}
-              onChange={(checked) => settings.general.setEditToolPartsExpanded(checked)}
-            />
-          </div>
         </SettingsRow>
       </SettingsList>
     </div>
@@ -650,65 +505,6 @@ export const SettingsGeneral: Component = () => {
     </div>
   )
 
-  const OpenclawSection = () => (
-    <div class="flex flex-col gap-1">
-      <h3 class="text-14-medium text-text-strong pb-2">{language.t("settings.desktop.section.openclaw")}</h3>
-
-      <SettingsList>
-        <SettingsRow
-          title={language.t("settings.desktop.openclaw.enabled.title")}
-          description={language.t("settings.desktop.openclaw.enabled.description")}
-        >
-          <div data-action="settings-openclaw-enabled">
-            <Switch
-              checked={openclawForm.enabled}
-              onChange={(checked) => {
-                setOpenclawForm("enabled", checked)
-                clearTimeout(openclawSave)
-                void saveOpenclaw({ enabled: checked })
-              }}
-            />
-          </div>
-        </SettingsRow>
-
-        <SettingsRow
-          title={language.t("settings.desktop.openclaw.url.title")}
-          description={language.t("settings.desktop.openclaw.url.description")}
-        >
-          <div class="w-full max-w-[340px]">
-            <TextField
-              value={openclawForm.url}
-              placeholder="ws://127.0.0.1:18789"
-              onChange={(value) => {
-                setOpenclawForm("url", value)
-                saveOpenclawLater({ url: value })
-              }}
-              onBlur={() => void saveOpenclaw({ url: openclawForm.url })}
-            />
-          </div>
-        </SettingsRow>
-
-        <SettingsRow
-          title={language.t("settings.desktop.openclaw.token.title")}
-          description={language.t("settings.desktop.openclaw.token.description")}
-        >
-          <div class="w-full max-w-[340px]">
-            <TextField
-              type="password"
-              value={openclawForm.token}
-              placeholder={language.t("settings.desktop.openclaw.token.placeholder")}
-              onChange={(value) => {
-                setOpenclawForm("token", value)
-                saveOpenclawLater({ token: value })
-              }}
-              onBlur={() => void saveOpenclaw({ token: openclawForm.token })}
-            />
-          </div>
-        </SettingsRow>
-      </SettingsList>
-    </div>
-  )
-
   return (
     <div class="flex flex-col h-full overflow-y-auto no-scrollbar px-4 pb-10 sm:px-10 sm:pb-10">
       <div class="sticky top-0 z-10 bg-[linear-gradient(to_bottom,var(--surface-stronger-non-alpha)_calc(100%_-_24px),transparent)]">
@@ -721,8 +517,6 @@ export const SettingsGeneral: Component = () => {
         <GeneralSection />
 
         <AppearanceSection />
-
-        <FeedSection />
 
         <NotificationsSection />
 
@@ -757,10 +551,6 @@ export const SettingsGeneral: Component = () => {
         </Show>*/}
 
         <UpdatesSection />
-
-        <Show when={desktop() && platform.getOpenclawConfig && platform.setOpenclawConfig}>
-          <OpenclawSection />
-        </Show>
 
         <Show when={linux()}>
           {(_) => {

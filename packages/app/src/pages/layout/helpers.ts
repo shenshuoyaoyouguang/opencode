@@ -1,11 +1,17 @@
 import { getFilename } from "@opencode-ai/util/path"
-import { type PermissionRequest, type Session } from "@opencode-ai/sdk/v2/client"
+import { type Session } from "@opencode-ai/sdk/v2/client"
+
+type SessionStore = {
+  session?: Session[]
+  path: { directory: string }
+}
 
 export const workspaceKey = (directory: string) => {
-  const drive = directory.match(/^([A-Za-z]:)[\\/]+$/)
-  if (drive) return `${drive[1]}${directory.includes("\\") ? "\\" : "/"}`
-  if (/^[\\/]+$/.test(directory)) return directory.includes("\\") ? "\\" : "/"
-  return directory.replace(/[\\/]+$/, "")
+  const value = directory.replaceAll("\\", "/")
+  const drive = value.match(/^([A-Za-z]:)\/+$/)
+  if (drive) return `${drive[1]}/`
+  if (/^\/+$/i.test(value)) return "/"
+  return value.replace(/\/+$/, "")
 }
 
 function sortSessions(now: number) {
@@ -25,42 +31,24 @@ function sortSessions(now: number) {
 const isRootVisibleSession = (session: Session, directory: string) =>
   workspaceKey(session.directory) === workspaceKey(directory) && !session.parentID && !session.time?.archived
 
-export const sortedRootSessions = (store: { session: Session[]; path: { directory: string } }, now: number) =>
-  store.session.filter((session) => isRootVisibleSession(session, store.path.directory)).sort(sortSessions(now))
+const roots = (store: SessionStore) =>
+  (store.session ?? []).filter((session) => isRootVisibleSession(session, store.path.directory))
 
-export const latestRootSession = (stores: { session: Session[]; path: { directory: string } }[], now: number) =>
-  stores
-    .flatMap((store) => store.session.filter((session) => isRootVisibleSession(session, store.path.directory)))
-    .sort(sortSessions(now))[0]
+export const sortedRootSessions = (store: SessionStore, now: number) => roots(store).sort(sortSessions(now))
 
-export function hasProjectPermissions(
-  session: Session[],
-  request: Record<string, PermissionRequest[] | undefined>,
-  directory: string,
-  include: (item: PermissionRequest) => boolean = () => true,
+export const latestRootSession = (stores: SessionStore[], now: number) =>
+  stores.flatMap(roots).sort(sortSessions(now))[0]
+
+export function hasProjectPermissions<T>(
+  request: Record<string, T[] | undefined> | undefined,
+  include: (item: T) => boolean = () => true,
 ) {
-  const children = childMapByParent(session)
-  return session
-    .filter((item) => isRootVisibleSession(item, directory))
-    .some((root) => {
-      const seen = new Set([root.id])
-      const ids = [root.id]
-      for (const id of ids) {
-        const list = children.get(id)
-        if (!list) continue
-        for (const child of list) {
-          if (seen.has(child)) continue
-          seen.add(child)
-          ids.push(child)
-        }
-      }
-      return ids.some((id) => request[id]?.some(include))
-    })
+  return Object.values(request ?? {}).some((list) => list?.some(include))
 }
 
-export const childMapByParent = (sessions: Session[]) => {
+export const childMapByParent = (sessions: Session[] | undefined) => {
   const map = new Map<string, string[]>()
-  for (const session of sessions) {
+  for (const session of sessions ?? []) {
     if (!session.parentID) continue
     const existing = map.get(session.parentID)
     if (existing) {
@@ -74,38 +62,6 @@ export const childMapByParent = (sessions: Session[]) => {
 
 export const displayName = (project: { name?: string; worktree: string }) =>
   project.name || getFilename(project.worktree)
-
-export type SessionGroupKey = "today" | "yesterday" | "thisWeek" | "thisMonth" | "older"
-
-function startOfDay(timestamp: number): number {
-  const date = new Date(timestamp)
-  date.setHours(0, 0, 0, 0)
-  return date.getTime()
-}
-
-function sessionGroupKey(session: Session, now: number): SessionGroupKey {
-  const today = startOfDay(now)
-  const t = session.time.updated ?? session.time.created
-  if (t >= today) return "today"
-  if (t >= today - 86_400_000) return "yesterday"
-  if (t >= today - 7 * 86_400_000) return "thisWeek"
-  if (t >= today - 30 * 86_400_000) return "thisMonth"
-  return "older"
-}
-
-/** Returns a Map from session ID to its group key, only for sessions that START a new group. */
-export function sessionGroupBoundaries(sessions: Session[], now: number): Map<string, SessionGroupKey> {
-  const headers = new Map<string, SessionGroupKey>()
-  let lastKey: SessionGroupKey | undefined
-  for (const session of sessions) {
-    const key = sessionGroupKey(session, now)
-    if (key !== lastKey) {
-      headers.set(session.id, key)
-      lastKey = key
-    }
-  }
-  return headers
-}
 
 export const errorMessage = (err: unknown, fallback: string) => {
   if (err && typeof err === "object" && "data" in err) {

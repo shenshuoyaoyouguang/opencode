@@ -1,6 +1,7 @@
-import { For, createEffect, createMemo, on, onCleanup, Show, Index, type JSX } from "solid-js"
+import { For, createEffect, createMemo, on, onCleanup, Show, Index, type JSX, createSignal } from "solid-js"
 import { createStore, produce } from "solid-js/store"
 import { useNavigate } from "@solidjs/router"
+import { useMutation } from "@tanstack/solid-query"
 import { Button } from "@opencode-ai/ui/button"
 import { FileIcon } from "@opencode-ai/ui/file-icon"
 import { Icon } from "@opencode-ai/ui/icon"
@@ -27,9 +28,9 @@ import { usePlatform } from "@/context/platform"
 import { useSettings } from "@/context/settings"
 import { useSDK } from "@/context/sdk"
 import { useSync } from "@/context/sync"
-import { itemStyle, virtualize } from "@/pages/session/message-timeline-utils"
+import { messageAgentColor } from "@/utils/agent"
 import { parseCommentNote, readCommentMetadata } from "@/utils/comment-note"
-import { Virtualizer, type VirtualizerHandle } from "virtua/solid"
+import { makeTimer } from "@solid-primitives/timer"
 
 type MessageComment = {
   path: string
@@ -66,17 +67,6 @@ const messageComments = (parts: Part[]): MessageComment[] =>
       },
     ]
   })
-
-const partHeight = (part: Part) => {
-  if (part.type === "text" || part.type === "reasoning") {
-    const len = part.text?.length ?? 0
-    return Math.min(560, 80 + len * 0.11)
-  }
-  if (part.type === "tool") return 96
-  if (part.type === "step-start") return 40
-  if (part.type === "snapshot") return 32
-  return 56
-}
 
 const boundaryTarget = (root: HTMLElement, target: EventTarget | null) => {
   const current = target instanceof Element ? target : undefined
@@ -116,32 +106,33 @@ type StageConfig = {
 
 type TimelineStageInput = {
   sessionKey: () => string
+  turnStart: () => number
   messages: () => UserMessage[]
   config: StageConfig
 }
 
 /**
- * Defer-mounts timeline windows so session switches and history reveals do not
+ * Defer-mounts small timeline windows so revealing older turns does not
  * block first paint with a large DOM mount.
  *
- * Staging runs on session switches so the first paint stays responsive even
- * when the next session contains heavy markdown/LaTeX content.
+ * Once staging completes for a session it never re-stages — backfill and
+ * new messages render immediately.
  */
 function createTimelineStaging(input: TimelineStageInput) {
   const [state, setState] = createStore({
     activeSession: "",
+    completedSession: "",
     count: 0,
   })
 
   const stagedCount = createMemo(() => {
     const total = input.messages().length
-    if (state.activeSession === input.sessionKey()) {
-      const init = Math.min(total, input.config.init)
-      if (state.count <= init) return init
-      if (state.count >= total) return total
-      return state.count
-    }
-    return total
+    if (input.turnStart() <= 0) return total
+    if (state.completedSession === input.sessionKey()) return total
+    const init = Math.min(total, input.config.init)
+    if (state.count <= init) return init
+    if (state.count >= total) return total
+    return state.count
   })
 
   const stagedUserMessages = createMemo(() => {
@@ -160,14 +151,15 @@ function createTimelineStaging(input: TimelineStageInput) {
 
   createEffect(
     on(
-      () => [input.sessionKey(), input.messages().length] as const,
-      ([sessionKey, total], prev) => {
+      () => [input.sessionKey(), input.turnStart() > 0, input.messages().length] as const,
+      ([sessionKey, isWindowed, total]) => {
         cancel()
-        if (sessionKey === prev?.[0]) {
-          if (state.activeSession !== sessionKey) setState({ activeSession: "", count: total })
-          return
-        }
-        if (total <= input.config.init) {
+        const shouldStage =
+          isWindowed &&
+          total > input.config.init &&
+          state.completedSession !== sessionKey &&
+          state.activeSession !== sessionKey
+        if (!shouldStage) {
           setState({ activeSession: "", count: total })
           return
         }
@@ -184,7 +176,7 @@ function createTimelineStaging(input: TimelineStageInput) {
           count = Math.min(currentTotal, count + input.config.batch)
           setState("count", count)
           if (count >= currentTotal) {
-            setState({ activeSession: "", count: currentTotal })
+            setState({ completedSession: sessionKey, activeSession: "" })
             frame = undefined
             return
           }
@@ -197,7 +189,7 @@ function createTimelineStaging(input: TimelineStageInput) {
 
   const isStaging = createMemo(() => {
     const key = input.sessionKey()
-    return state.activeSession === key
+    return state.activeSession === key && state.completedSession !== key
   })
 
   onCleanup(cancel)
@@ -219,10 +211,7 @@ export function MessageTimeline(props: {
   onTurnBackfillScroll: () => void
   onAutoScrollInteraction: (event: MouseEvent) => void
   centered: boolean
-  scrollRef: () => HTMLDivElement | undefined
-  onVirtualizedChange?: (value: boolean) => void
   setContentRef: (el: HTMLDivElement) => void
-  setVirtualizerRef: (handle: VirtualizerHandle | undefined) => void
   turnStart: number
   historyMore: boolean
   historyLoading: boolean
@@ -243,21 +232,6 @@ export function MessageTimeline(props: {
   const platform = usePlatform()
 
   const rendered = createMemo(() => props.renderedUserMessages.map((message) => message.id))
-  const itemSize = createMemo(() => {
-    const list = props.renderedUserMessages
-    if (list.length === 0) return 520
-
-    const recent = list.slice(Math.max(0, list.length - 8))
-    const total = recent.reduce((sum, message) => {
-      const parts = sync.data.part[message.id] ?? []
-      const comments = messageComments(parts)
-      const body = parts.reduce((value, part) => value + partHeight(part), 120)
-      const notes = comments.length * 88
-      return sum + body + notes + 48
-    }, 0)
-
-    return Math.max(320, Math.min(1200, Math.round(total / recent.length)))
-  })
   const sessionID = createMemo(() => params.id)
   const sessionMessages = createMemo(() => {
     const id = sessionID()
@@ -275,47 +249,23 @@ export function MessageTimeline(props: {
     return sync.data.session_status[id] ?? idle
   })
   const working = createMemo(() => !!pending() || sessionStatus().type !== "idle")
-  const shouldVirtualize = createMemo(() =>
-    virtualize({
-      desktop: platform.platform === "desktop",
-      count: rendered().length,
-      working: working(),
-    }),
-  )
-  createEffect(() => props.onVirtualizedChange?.(shouldVirtualize()))
+  const tint = createMemo(() => messageAgentColor(sessionMessages(), sync.data.agent))
 
-  const [slot, setSlot] = createStore({
-    open: false,
-    show: false,
-    fade: false,
+  const [timeoutDone, setTimeoutDone] = createSignal(true)
+
+  const workingStatus = createMemo<"hidden" | "showing" | "hiding">((prev) => {
+    if (working()) return "showing"
+    if (prev === "showing" || !timeoutDone()) return "hiding"
+    return "hidden"
   })
 
-  let f: number | undefined
-  const clear = () => {
-    if (f !== undefined) window.clearTimeout(f)
-    f = undefined
-  }
+  createEffect(() => {
+    if (workingStatus() !== "hiding") return
 
-  onCleanup(clear)
-  createEffect(
-    on(
-      working,
-      (on, prev) => {
-        clear()
-        if (on) {
-          setSlot({ open: true, show: true, fade: false })
-          return
-        }
-        if (prev) {
-          setSlot({ open: false, show: true, fade: true })
-          f = window.setTimeout(() => setSlot({ show: false, fade: false }), 260)
-          return
-        }
-        setSlot({ open: false, show: false, fade: false })
-      },
-      { defer: true },
-    ),
-  )
+    setTimeoutDone(false)
+    makeTimer(() => setTimeoutDone(true), 260, setTimeout)
+  })
+
   const activeMessageID = createMemo(() => {
     const parentID = pending()?.parentID
     if (parentID) {
@@ -345,9 +295,10 @@ export function MessageTimeline(props: {
   const shareEnabled = createMemo(() => sync.data.config.share !== "disabled")
   const parentID = createMemo(() => info()?.parentID)
   const showHeader = createMemo(() => !!(titleValue() || parentID()))
-  const stageCfg = platform.platform === "desktop" ? { init: 1, batch: 1 } : { init: 1, batch: 3 }
+  const stageCfg = { init: 1, batch: 3 }
   const staging = createTimelineStaging({
     sessionKey,
+    turnStart: () => props.turnStart,
     messages: () => props.renderedUserMessages,
     config: stageCfg,
   })
@@ -355,7 +306,6 @@ export function MessageTimeline(props: {
   const [title, setTitle] = createStore({
     draft: "",
     editing: false,
-    saving: false,
     menuOpen: false,
     pendingRename: false,
     pendingShare: false,
@@ -368,38 +318,6 @@ export function MessageTimeline(props: {
   })
 
   let more: HTMLButtonElement | undefined
-
-  const [req, setReq] = createStore({ share: false, unshare: false })
-
-  const shareSession = () => {
-    const id = sessionID()
-    if (!id || req.share) return
-    if (!shareEnabled()) return
-    setReq("share", true)
-    globalSDK.client.session
-      .share({ sessionID: id, directory: sdk.directory })
-      .catch((err: unknown) => {
-        console.error("Failed to share session", err)
-      })
-      .finally(() => {
-        setReq("share", false)
-      })
-  }
-
-  const unshareSession = () => {
-    const id = sessionID()
-    if (!id || req.unshare) return
-    if (!shareEnabled()) return
-    setReq("unshare", true)
-    globalSDK.client.session
-      .unshare({ sessionID: id, directory: sdk.directory })
-      .catch((err: unknown) => {
-        console.error("Failed to unshare session", err)
-      })
-      .finally(() => {
-        setReq("unshare", false)
-      })
-  }
 
   const viewShare = () => {
     const url = shareUrl()
@@ -416,6 +334,54 @@ export function MessageTimeline(props: {
     return language.t("common.requestFailed")
   }
 
+  const shareMutation = useMutation(() => ({
+    mutationFn: (id: string) => globalSDK.client.session.share({ sessionID: id, directory: sdk.directory }),
+    onError: (err) => {
+      console.error("Failed to share session", err)
+    },
+  }))
+
+  const unshareMutation = useMutation(() => ({
+    mutationFn: (id: string) => globalSDK.client.session.unshare({ sessionID: id, directory: sdk.directory }),
+    onError: (err) => {
+      console.error("Failed to unshare session", err)
+    },
+  }))
+
+  const titleMutation = useMutation(() => ({
+    mutationFn: (input: { id: string; title: string }) =>
+      sdk.client.session.update({ sessionID: input.id, title: input.title }),
+    onSuccess: (_, input) => {
+      sync.set(
+        produce((draft) => {
+          const index = draft.session.findIndex((s) => s.id === input.id)
+          if (index !== -1) draft.session[index].title = input.title
+        }),
+      )
+      setTitle("editing", false)
+    },
+    onError: (err) => {
+      showToast({
+        title: language.t("common.requestFailed"),
+        description: errorMessage(err),
+      })
+    },
+  }))
+
+  const shareSession = () => {
+    const id = sessionID()
+    if (!id || shareMutation.isPending) return
+    if (!shareEnabled()) return
+    shareMutation.mutate(id)
+  }
+
+  const unshareSession = () => {
+    const id = sessionID()
+    if (!id || unshareMutation.isPending) return
+    if (!shareEnabled()) return
+    unshareMutation.mutate(id)
+  }
+
   createEffect(
     on(
       sessionKey,
@@ -423,7 +389,6 @@ export function MessageTimeline(props: {
         setTitle({
           draft: "",
           editing: false,
-          saving: false,
           menuOpen: false,
           pendingRename: false,
           pendingShare: false,
@@ -442,40 +407,22 @@ export function MessageTimeline(props: {
   }
 
   const closeTitleEditor = () => {
-    if (title.saving) return
-    setTitle({ editing: false, saving: false })
+    if (titleMutation.isPending) return
+    setTitle("editing", false)
   }
 
-  const saveTitleEditor = async () => {
+  const saveTitleEditor = () => {
     const id = sessionID()
     if (!id) return
-    if (title.saving) return
+    if (titleMutation.isPending) return
 
     const next = title.draft.trim()
     if (!next || next === (titleValue() ?? "")) {
-      setTitle({ editing: false, saving: false })
+      setTitle("editing", false)
       return
     }
 
-    setTitle("saving", true)
-    await sdk.client.session
-      .update({ sessionID: id, title: next })
-      .then(() => {
-        sync.set(
-          produce((draft) => {
-            const index = draft.session.findIndex((s) => s.id === id)
-            if (index !== -1) draft.session[index].title = next
-          }),
-        )
-        setTitle({ editing: false, saving: false })
-      })
-      .catch((err) => {
-        setTitle("saving", false)
-        showToast({
-          title: language.t("common.requestFailed"),
-          description: errorMessage(err),
-        })
-      })
+    titleMutation.mutate({ id, title: next })
   }
 
   const navigateAfterSessionRemoval = (sessionID: string, parentID?: string, nextSessionID?: string) => {
@@ -695,8 +642,8 @@ export function MessageTimeline(props: {
                   "w-full": true,
                   "pb-4": true,
                   "pl-2 pr-3 md:pl-4 md:pr-3": true,
+                  "md:max-w-200 md:mx-auto 2xl:max-w-[1000px]": props.centered,
                 }}
-                style={itemStyle(props.centered)}
               >
                 <div class="h-12 w-full flex items-center justify-between gap-2">
                   <div class="flex items-center gap-1 min-w-0 flex-1 pr-3">
@@ -713,19 +660,17 @@ export function MessageTimeline(props: {
                       <div
                         class="shrink-0 flex items-center justify-center overflow-hidden transition-[width,margin] duration-300 ease-[cubic-bezier(0.22,1,0.36,1)]"
                         style={{
-                          width: slot.open ? "16px" : "0px",
-                          "margin-right": slot.open ? "8px" : "0px",
+                          width: working() ? "16px" : "0px",
+                          "margin-right": working() ? "8px" : "0px",
                         }}
                         aria-hidden="true"
                       >
-                        <Show when={slot.show}>
+                        <Show when={workingStatus() !== "hidden"}>
                           <div
                             class="transition-opacity duration-200 ease-out"
-                            classList={{
-                              "opacity-0": slot.fade,
-                            }}
+                            classList={{ "opacity-0": workingStatus() === "hiding" }}
                           >
-                            <Spinner class="size-4" style={{ color: "var(--icon-interactive-base)" }} />
+                            <Spinner class="size-4" style={{ color: tint() ?? "var(--icon-interactive-base)" }} />
                           </div>
                         </Show>
                       </div>
@@ -746,7 +691,7 @@ export function MessageTimeline(props: {
                               titleRef = el
                             }}
                             value={title.draft}
-                            disabled={title.saving}
+                            disabled={titleMutation.isPending}
                             class="text-14-medium text-text-strong grow-1 min-w-0 rounded-[6px]"
                             style={{ "--inline-input-shadow": "var(--shadow-xs-border-select)" }}
                             onInput={(event) => setTitle("draft", event.currentTarget.value)}
@@ -897,9 +842,9 @@ export function MessageTimeline(props: {
                                         variant="primary"
                                         class="w-full"
                                         onClick={shareSession}
-                                        disabled={req.share}
+                                        disabled={shareMutation.isPending}
                                       >
-                                        {req.share
+                                        {shareMutation.isPending
                                           ? language.t("session.share.action.publishing")
                                           : language.t("session.share.action.publish")}
                                       </Button>
@@ -920,9 +865,9 @@ export function MessageTimeline(props: {
                                           variant="secondary"
                                           class="w-full shadow-none border border-border-weak-base"
                                           onClick={unshareSession}
-                                          disabled={req.unshare}
+                                          disabled={unshareMutation.isPending}
                                         >
-                                          {req.unshare
+                                          {unshareMutation.isPending
                                             ? language.t("session.share.action.unpublishing")
                                             : language.t("session.share.action.unpublish")}
                                         </Button>
@@ -931,7 +876,7 @@ export function MessageTimeline(props: {
                                           variant="primary"
                                           class="w-full"
                                           onClick={viewShare}
-                                          disabled={req.unshare}
+                                          disabled={unshareMutation.isPending}
                                         >
                                           {language.t("session.share.action.view")}
                                         </Button>
@@ -949,18 +894,15 @@ export function MessageTimeline(props: {
                 </div>
               </div>
             </Show>
-
             <div
               role="log"
-              class="items-start justify-start pb-16 transition-[margin]"
+              class="flex flex-col gap-12 items-start justify-start pb-16 transition-[margin]"
               classList={{
                 "w-full": true,
-                "flex flex-col gap-12": !shouldVirtualize(),
-                block: shouldVirtualize(),
+                "md:max-w-200 md:mx-auto 2xl:max-w-[1000px]": props.centered,
                 "mt-0.5": props.centered,
                 "mt-0": !props.centered,
               }}
-              style={itemStyle(props.centered)}
             >
               <Show when={props.turnStart > 0 || props.historyMore}>
                 <div class="w-full flex justify-center">
@@ -977,105 +919,95 @@ export function MessageTimeline(props: {
                   </Button>
                 </div>
               </Show>
-              <Show
-                when={shouldVirtualize()}
-                fallback={
-                  <For each={rendered()}>
-                    {(messageID, index) => <TimelineItem index={index()} messageID={messageID} />}
-                  </For>
-                }
-              >
-                <Virtualizer
-                  data={rendered()}
-                  scrollRef={props.scrollRef()}
-                  shift
-                  itemSize={itemSize()}
-                  keepMounted={rendered().length > 0 ? [Math.max(0, rendered().length - 1)] : []}
-                  ref={props.setVirtualizerRef}
-                >
-                  {(messageID, index) => <TimelineItem index={index()} messageID={messageID} />}
-                </Virtualizer>
-              </Show>
+              <For each={rendered()}>
+                {(messageID) => {
+                  const active = createMemo(() => activeMessageID() === messageID)
+                  const comments = createMemo(() => messageComments(sync.data.part[messageID] ?? []), [], {
+                    equals: (a, b) =>
+                      a.length === b.length &&
+                      a.every(
+                        (c, i) =>
+                          c.path === b[i].path &&
+                          c.comment === b[i].comment &&
+                          c.selection?.startLine === b[i].selection?.startLine &&
+                          c.selection?.endLine === b[i].selection?.endLine,
+                      ),
+                  })
+                  const commentCount = createMemo(() => comments().length)
+                  return (
+                    <div
+                      id={props.anchor(messageID)}
+                      data-message-id={messageID}
+                      classList={{
+                        "min-w-0 w-full max-w-full": true,
+                        "md:max-w-200 2xl:max-w-[1000px]": props.centered,
+                      }}
+                      style={{ "content-visibility": "auto", "contain-intrinsic-size": "auto 500px" }}
+                    >
+                      <Show when={commentCount() > 0}>
+                        <div class="w-full px-4 md:px-5 pb-2">
+                          <div class="ml-auto max-w-[82%] overflow-x-auto no-scrollbar">
+                            <div class="flex w-max min-w-full justify-end gap-2">
+                              <Index each={comments()}>
+                                {(commentAccessor: () => MessageComment) => {
+                                  const comment = createMemo(() => commentAccessor())
+                                  return (
+                                    <Show when={comment()}>
+                                      {(c) => (
+                                        <div class="shrink-0 max-w-[260px] rounded-[6px] border border-border-weak-base bg-background-stronger px-2.5 py-2">
+                                          <div class="flex items-center gap-1.5 min-w-0 text-11-medium text-text-strong">
+                                            <FileIcon
+                                              node={{ path: c().path, type: "file" }}
+                                              class="size-3.5 shrink-0"
+                                            />
+                                            <span class="truncate">{getFilename(c().path)}</span>
+                                            <Show when={c().selection}>
+                                              {(selection) => (
+                                                <span class="shrink-0 text-text-weak">
+                                                  {selection().startLine === selection().endLine
+                                                    ? `:${selection().startLine}`
+                                                    : `:${selection().startLine}-${selection().endLine}`}
+                                                </span>
+                                              )}
+                                            </Show>
+                                          </div>
+                                          <div class="pt-1 text-12-regular text-text-strong whitespace-pre-wrap break-words">
+                                            {c().comment}
+                                          </div>
+                                        </div>
+                                      )}
+                                    </Show>
+                                  )
+                                }}
+                              </Index>
+                            </div>
+                          </div>
+                        </div>
+                      </Show>
+                      <SessionTurn
+                        sessionID={sessionID() ?? ""}
+                        messageID={messageID}
+                        messages={sessionMessages()}
+                        actions={props.actions}
+                        active={active()}
+                        status={active() ? sessionStatus() : undefined}
+                        showReasoningSummaries={settings.general.showReasoningSummaries()}
+                        shellToolDefaultOpen={settings.general.shellToolPartsExpanded()}
+                        editToolDefaultOpen={settings.general.editToolPartsExpanded()}
+                        classes={{
+                          root: "min-w-0 w-full relative",
+                          content: "flex flex-col justify-between !overflow-visible",
+                          container: "w-full px-4 md:px-5",
+                        }}
+                      />
+                    </div>
+                  )
+                }}
+              </For>
             </div>
           </div>
         </ScrollView>
       </div>
     </Show>
   )
-
-  function TimelineItem(item: { messageID: string; index: number }) {
-    const active = createMemo(() => activeMessageID() === item.messageID)
-    const eager = createMemo(() => rendered().length - item.index <= 2)
-    const comments = createMemo(() => messageComments(sync.data.part[item.messageID] ?? []), [], {
-      equals: (a, b) => JSON.stringify(a) === JSON.stringify(b),
-    })
-    const commentCount = createMemo(() => comments().length)
-
-    return (
-      <div
-        id={props.anchor(item.messageID)}
-        data-message-id={item.messageID}
-        classList={{
-          "min-w-0 w-full max-w-full": true,
-          "pb-12": shouldVirtualize(),
-        }}
-        style={itemStyle(props.centered)}
-      >
-        <Show when={commentCount() > 0}>
-          <div class="w-full px-4 md:px-5 pb-2">
-            <div class="ml-auto max-w-[82%] overflow-x-auto no-scrollbar">
-              <div class="flex w-max min-w-full justify-end gap-2">
-                <Index each={comments()}>
-                  {(commentAccessor: () => MessageComment) => {
-                    const comment = createMemo(() => commentAccessor())
-                    return (
-                      <Show when={comment()}>
-                        {(c) => (
-                          <div class="shrink-0 max-w-[260px] rounded-[6px] border border-border-weak-base bg-background-stronger px-2.5 py-2">
-                            <div class="flex items-center gap-1.5 min-w-0 text-11-medium text-text-strong">
-                              <FileIcon node={{ path: c().path, type: "file" }} class="size-3.5 shrink-0" />
-                              <span class="truncate">{getFilename(c().path)}</span>
-                              <Show when={c().selection}>
-                                {(selection) => (
-                                  <span class="shrink-0 text-text-weak">
-                                    {selection().startLine === selection().endLine
-                                      ? `:${selection().startLine}`
-                                      : `:${selection().startLine}-${selection().endLine}`}
-                                  </span>
-                                )}
-                              </Show>
-                            </div>
-                            <div class="pt-1 text-12-regular text-text-strong whitespace-pre-wrap break-words">
-                              {c().comment}
-                            </div>
-                          </div>
-                        )}
-                      </Show>
-                    )
-                  }}
-                </Index>
-              </div>
-            </div>
-          </div>
-        </Show>
-        <SessionTurn
-          sessionID={sessionID() ?? ""}
-          messageID={item.messageID}
-          actions={props.actions}
-          active={active()}
-          status={active() ? sessionStatus() : undefined}
-          showReasoningSummaries={settings.general.showReasoningSummaries()}
-          showCustomHookParts={settings.general.showCustomHookParts()}
-          shellToolDefaultOpen={settings.general.shellToolPartsExpanded()}
-          editToolDefaultOpen={settings.general.editToolPartsExpanded()}
-          markdownEager={eager()}
-          classes={{
-            root: "min-w-0 w-full relative",
-            content: "flex flex-col justify-between !overflow-visible",
-            container: "w-full px-4 md:px-5",
-          }}
-        />
-      </div>
-    )
-  }
 }

@@ -1,9 +1,14 @@
 // @refresh reload
 
 import {
+  ACCEPTED_FILE_EXTENSIONS,
+  filePickerFilters,
   AppBaseProviders,
   AppInterface,
   handleNotificationClick,
+  loadLocaleDict,
+  normalizeLocale,
+  type Locale,
   type Platform,
   PlatformProvider,
   ServerConnection,
@@ -11,8 +16,6 @@ import {
 } from "@opencode-ai/app"
 import type { AsyncStorage } from "@solid-primitives/storage"
 import { getCurrentWindow } from "@tauri-apps/api/window"
-import { getCurrentWebview } from "@tauri-apps/api/webview"
-import { listen } from "@tauri-apps/api/event"
 import { readImage } from "@tauri-apps/plugin-clipboard-manager"
 import { getCurrent, onOpenUrl } from "@tauri-apps/plugin-deep-link"
 import { open, save } from "@tauri-apps/plugin-dialog"
@@ -23,14 +26,13 @@ import { relaunch } from "@tauri-apps/plugin-process"
 import { open as shellOpen } from "@tauri-apps/plugin-shell"
 import { Store } from "@tauri-apps/plugin-store"
 import { check, type Update } from "@tauri-apps/plugin-updater"
-import { createResource, createSignal, onCleanup, onMount, Show } from "solid-js"
+import { createResource, onCleanup, onMount, Show } from "solid-js"
 import { render } from "solid-js/web"
 import pkg from "../package.json"
 import { initI18n, t } from "./i18n"
 import { UPDATER_ENABLED } from "./updater"
 import { webviewZoom } from "./webview-zoom"
 import "./styles.css"
-import { base64Encode } from "@opencode-ai/util/encode"
 import { Channel } from "@tauri-apps/api/core"
 import { commands, type InitStep } from "./bindings"
 import { createMenu } from "./menu"
@@ -43,65 +45,8 @@ if (import.meta.env.DEV && !(root instanceof HTMLElement)) {
 void initI18n()
 
 let update: Update | null = null
-const [busy, setBusy] = createSignal(false)
-
-const reload = async () => {
-  if (busy()) return
-  setBusy(true)
-  await commands.reloadSidecar().finally(() => setBusy(false))
-}
 
 const deepLinkEvent = "opencode:deep-link"
-
-const navigateToPath = (path: string) => {
-  const encoded = base64Encode(path)
-  window.history.pushState(null, "", `/${encoded}/session`)
-  window.dispatchEvent(new PopStateEvent("popstate"))
-}
-
-const listenForOpenPath = async () => {
-  const initialPath = window.__OPENCODE__?.initialPath
-  if (initialPath) {
-    window.__OPENCODE__!.initialPath = null
-    setTimeout(() => navigateToPath(initialPath), 100)
-  }
-
-  await listen<string>("opencode:open-path", (event) => {
-    navigateToPath(event.payload)
-  })
-}
-
-const dragDropEvent = "opencode:drag-drop"
-
-export type DragDropDetail = {
-  type: "enter" | "over" | "drop" | "leave"
-  paths: string[]
-  position: { x: number; y: number }
-}
-
-const emitDragDrop = (detail: DragDropDetail) => {
-  window.dispatchEvent(new CustomEvent(dragDropEvent, { detail }))
-}
-
-const listenForDragDrop = async () => {
-  await getCurrentWebview().onDragDropEvent((event) => {
-    const payload = event.payload
-    switch (payload.type) {
-      case "enter":
-        emitDragDrop({ type: "enter", paths: payload.paths, position: payload.position })
-        break
-      case "over":
-        emitDragDrop({ type: "over", paths: [], position: payload.position })
-        break
-      case "drop":
-        emitDragDrop({ type: "drop", paths: payload.paths, position: payload.position })
-        break
-      case "leave":
-        emitDragDrop({ type: "leave", paths: [], position: { x: 0, y: 0 } })
-        break
-    }
-  })
-}
 
 const emitDeepLinks = (urls: string[]) => {
   if (urls.length === 0) return
@@ -142,35 +87,6 @@ const createPlatform = (): Platform => {
     os,
     version: pkg.version,
 
-    async openInFinder(path: string) {
-      await commands.openInFinder(path)
-    },
-
-    async openInVscode(path: string) {
-      await commands.openInVscode(path)
-    },
-
-    async openInEditor(editor: string, path: string) {
-      const customPath = await commands.getCustomEditorPath().catch(() => null)
-      await commands.openInEditor(editor, path, customPath)
-    },
-
-    async getCustomEditorPath() {
-      return commands.getCustomEditorPath().catch(() => null)
-    },
-
-    async setCustomEditorPath(path: string | null) {
-      await commands.setCustomEditorPath(path)
-    },
-
-    async getDefaultEditor() {
-      return commands.getDefaultEditor().catch(() => null)
-    },
-
-    async setDefaultEditor(editor: string | null) {
-      await commands.setDefaultEditor(editor)
-    },
-
     async openDirectoryPickerDialog(opts) {
       const defaultPath = await wslHome()
       const result = await open({
@@ -187,6 +103,7 @@ const createPlatform = (): Platform => {
         directory: false,
         multiple: opts?.multiple ?? false,
         title: opts?.title ?? t("desktop.dialog.chooseFile"),
+        filters: filePickerFilters(opts?.extensions ?? ACCEPTED_FILE_EXTENSIONS),
       })
       return handleWslPicker(result)
     },
@@ -202,63 +119,8 @@ const createPlatform = (): Platform => {
     openLink(url: string) {
       void shellOpen(url).catch(() => undefined)
     },
-
-    async filterDirectories(paths: string[]) {
-      return commands.filterDirectories(paths)
-    },
-
-    async find(query, dir) {
-      const q = query.trim()
-      if (!q) return
-      return (window as Window & { find?: (...args: unknown[]) => boolean }).find?.(
-        q,
-        false,
-        dir === -1,
-        true,
-        false,
-        false,
-        false,
-      )
-    },
     async openPath(path: string, app?: string) {
       await commands.openPath(path, app ?? null)
-    },
-
-    async listConfigFiles(directory) {
-      return commands.listConfigFiles(directory ?? null)
-    },
-
-    async listConfigDirectory(path: string) {
-      const list = await commands.listConfigDirectory(path)
-      return list.map((item) => ({
-        path: item.path,
-        kind: item.kind === "directory" ? "directory" : "file",
-      }))
-    },
-
-    async readConfigFile(path: string) {
-      return commands.readConfigFile(path)
-    },
-
-    async writeConfigFile(path: string, content: string) {
-      await commands.writeConfigFile(path, content)
-    },
-
-    async createConfigFile(path: string, content: string) {
-      await commands.createConfigFile(path, content)
-    },
-
-    async getConfigWorkspace() {
-      const data = await commands.getConfigWorkspace()
-      return {
-        configRoot: data.configRoot ?? undefined,
-        agentsRoot: data.agentsRoot ?? undefined,
-        skillsRoot: data.skillsRoot ?? undefined,
-        pluginsRoot: data.pluginsRoot ?? undefined,
-        agentsMdPath: data.agentsMdPath ?? undefined,
-        agents: data.agents,
-        plugins: data.plugins,
-      }
     },
 
     back() {
@@ -446,10 +308,6 @@ const createPlatform = (): Platform => {
       await relaunch()
     },
 
-    reloadBackend: async () => {
-      await reload()
-    },
-
     notify: async (title, description, href) => {
       const granted = await isPermissionGranted().catch(() => false)
       const permission = granted ? "granted" : await requestPermission().catch(() => "denied")
@@ -493,23 +351,6 @@ const createPlatform = (): Platform => {
 
     setWslEnabled: async (enabled) => {
       await commands.setWslConfig({ enabled })
-    },
-
-    getOpenclawConfig: async () => {
-      const next = await commands.getOpenclawConfig().catch(() => null)
-      return {
-        enabled: next?.enabled ?? false,
-        url: next?.url ?? undefined,
-        token: next?.token ?? undefined,
-      }
-    },
-
-    setOpenclawConfig: async (config) => {
-      await commands.setOpenclawConfig({
-        enabled: config.enabled,
-        url: config.url ?? null,
-        token: config.token ?? null,
-      })
     },
 
     getDefaultServer: async () => {
@@ -573,55 +414,47 @@ createMenu((id) => {
   menuTrigger?.(id)
 })
 void listenForDeepLinks()
-void listenForOpenPath()
-void listenForDragDrop()
 
 render(() => {
   const platform = createPlatform()
+  const loadLocale = async () => {
+    const current = await platform.storage?.("opencode.global.dat").getItem("language")
+    const legacy = current ? undefined : await platform.storage?.().getItem("language.v1")
+    const raw = current ?? legacy
+    if (!raw) return
+    const locale = raw.match(/"locale"\s*:\s*"([^"]+)"/)?.[1]
+    if (!locale) return
+    const next = normalizeLocale(locale)
+    if (next !== "en") await loadLocaleDict(next)
+    return next satisfies Locale
+  }
 
   // Fetch sidecar credentials from Rust (available immediately, before health check)
   const [sidecar] = createResource(() => commands.awaitInitialization(new Channel<InitStep>() as any))
-  const [openclaw] = createResource(() => commands.getOpenclawServer())
 
   const [defaultServer] = createResource(() =>
     platform.getDefaultServer?.().then((url) => {
       if (url) return ServerConnection.key({ type: "http", http: { url } })
     }),
   )
+  const [locale] = createResource(loadLocale)
 
   // Build the sidecar server connection once credentials arrive
   const servers = () => {
-    const list = [] as ServerConnection.Any[]
     const data = sidecar()
-    if (data) {
-      const http = {
-        url: data.url,
-        username: data.username ?? undefined,
-        password: data.password ?? undefined,
-      }
-      list.push({
-        displayName: t("desktop.server.local"),
-        type: "sidecar",
-        variant: "base",
-        http,
-      })
+    if (!data) return []
+    const http = {
+      url: data.url,
+      username: data.username ?? undefined,
+      password: data.password ?? undefined,
     }
-
-    const claw = openclaw()
-    if (claw) {
-      list.push({
-        displayName: t("desktop.server.openclaw"),
-        integration: "openclaw",
-        type: "http",
-        http: {
-          url: claw.url,
-          username: claw.username ?? undefined,
-          password: claw.password ?? undefined,
-        },
-      })
+    const server: ServerConnection.Sidecar = {
+      displayName: t("desktop.server.local"),
+      type: "sidecar",
+      variant: "base",
+      http,
     }
-
-    return list
+    return [server] as ServerConnection.Any[]
   }
 
   function handleClick(e: MouseEvent) {
@@ -635,21 +468,6 @@ render(() => {
   function Inner() {
     const cmd = useCommand()
     menuTrigger = (id) => cmd.trigger(id)
-
-    onMount(() => {
-      const onKeyDown = (event: KeyboardEvent) => {
-        if (!(event.metaKey || event.ctrlKey) || event.altKey || event.shiftKey) return
-        if (event.key.toLowerCase() !== "f") return
-
-        event.preventDefault()
-        event.stopPropagation()
-        cmd.trigger("page.find", "keybind")
-      }
-
-      window.addEventListener("keydown", onKeyDown, { capture: true })
-      onCleanup(() => window.removeEventListener("keydown", onKeyDown, { capture: true }))
-    })
-
     return null
   }
 
@@ -662,43 +480,16 @@ render(() => {
 
   return (
     <PlatformProvider value={platform}>
-      <AppBaseProviders>
-        <Show when={!defaultServer.loading && !sidecar.loading && !openclaw.loading}>
+      <AppBaseProviders locale={locale.latest}>
+        <Show when={!defaultServer.loading && !sidecar.loading && !locale.loading}>
           {(_) => {
             return (
-              <>
-                <AppInterface
-                  defaultServer={defaultServer.latest ?? ServerConnection.Key.make("sidecar")}
-                  servers={servers()}
-                >
-                  <Inner />
-                </AppInterface>
-                <Show when={busy()}>
-                  <div class="desktop-busy" aria-live="polite" aria-busy="true">
-                    <div class="desktop-busy-card">
-                      <div class="desktop-busy-stage" aria-hidden="true">
-                        <div class="desktop-busy-orbit">
-                          <div class="desktop-busy-orbit-track" />
-                          <div class="desktop-busy-orbit-arc" />
-                          <div class="desktop-busy-rotor desktop-busy-rotor-a">
-                            <div class="desktop-busy-dot desktop-busy-dot-a" />
-                          </div>
-                          <div class="desktop-busy-rotor desktop-busy-rotor-b">
-                            <div class="desktop-busy-dot desktop-busy-dot-b" />
-                          </div>
-                          <div class="desktop-busy-rotor desktop-busy-rotor-c">
-                            <div class="desktop-busy-dot desktop-busy-dot-c" />
-                          </div>
-                        </div>
-                      </div>
-                      <div class="desktop-busy-copy">
-                        <div class="desktop-busy-title">{t("desktop.loading.reload.title")}</div>
-                        <div class="desktop-busy-text">{t("desktop.loading.reload.message")}</div>
-                      </div>
-                    </div>
-                  </div>
-                </Show>
-              </>
+              <AppInterface
+                defaultServer={defaultServer.latest ?? ServerConnection.Key.make("sidecar")}
+                servers={servers()}
+              >
+                <Inner />
+              </AppInterface>
             )
           }}
         </Show>

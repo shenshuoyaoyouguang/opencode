@@ -1,6 +1,7 @@
-import type { Message } from "@opencode-ai/sdk/v2/client"
+import type { Message, Session } from "@opencode-ai/sdk/v2/client"
 import { showToast } from "@opencode-ai/ui/toast"
 import { base64Encode } from "@opencode-ai/util/encode"
+import { Binary } from "@opencode-ai/util/binary"
 import { useNavigate, useParams } from "@solidjs/router"
 import type { Accessor } from "solid-js"
 import type { FileSelection } from "@/context/file"
@@ -10,7 +11,6 @@ import { useLayout } from "@/context/layout"
 import { useLocal } from "@/context/local"
 import { usePermission } from "@/context/permission"
 import { type ContextItem, type ImageAttachmentPart, type Prompt, usePrompt } from "@/context/prompt"
-import { useServer } from "@/context/server"
 import { useSDK } from "@/context/sdk"
 import { useSync } from "@/context/sync"
 import { Identifier } from "@/utils/id"
@@ -185,7 +185,6 @@ type PromptSubmitInput = {
   onQueue?: (draft: FollowupDraft) => void
   onAbort?: () => void
   onSubmit?: () => void
-  onSubmitted?: () => void
 }
 
 type CommentItem = {
@@ -203,7 +202,6 @@ export function createPromptSubmit(input: PromptSubmitInput) {
   const sync = useSync()
   const globalSync = useGlobalSync()
   const local = useLocal()
-  const server = useServer()
   const permission = usePermission()
   const prompt = usePrompt()
   const layout = useLayout()
@@ -269,6 +267,20 @@ export function createPromptSubmit(input: PromptSubmitInput) {
     }
   }
 
+  const seed = (dir: string, info: Session) => {
+    const [, setStore] = globalSync.child(dir)
+    setStore("session", (list: Session[]) => {
+      const result = Binary.search(list, info.id, (item) => item.id)
+      const next = [...list]
+      if (result.found) {
+        next[result.index] = info
+        return next
+      }
+      next.splice(result.index, 0, info)
+      return next
+    })
+  }
+
   const handleSubmit = async (event: Event) => {
     event.preventDefault()
 
@@ -282,17 +294,9 @@ export function createPromptSubmit(input: PromptSubmitInput) {
       return
     }
 
-    const openclaw = server.current?.integration === "openclaw"
-    const currentModel =
-      local.model.current() ??
-      (openclaw
-        ? {
-            id: "claw",
-            name: "Claw",
-            provider: { id: "openclaw", name: "OpenClaw", models: {} },
-          }
-        : undefined)
-    const currentAgent = local.agent.current() ?? (openclaw ? { name: "claw" } : undefined)
+    const currentModel = local.model.current()
+    const currentAgent = local.agent.current()
+    const variant = local.model.variant.current()
     if (!currentModel || !currentAgent) {
       showToast({
         title: language.t("prompt.toast.modelAgentRequired.title"),
@@ -305,7 +309,6 @@ export function createPromptSubmit(input: PromptSubmitInput) {
     input.resetHistoryNavigation()
 
     const projectDirectory = sdk.directory
-
     const isNewSession = !params.id
     const shouldAutoAccept = isNewSession && input.autoAccept()
     const worktreeSelection = input.newSessionWorktree?.() || "main"
@@ -342,20 +345,6 @@ export function createPromptSubmit(input: PromptSubmitInput) {
       }
 
       if (sessionDirectory !== projectDirectory) {
-        // Guard: 确保 sessionDirectory 不为空（worktree 场景）
-        if (!sessionDirectory || sessionDirectory.trim() === "") {
-          console.error("[BUG] sessionDirectory is empty in worktree path", {
-            sessionDirectory,
-            projectDirectory,
-            worktreeSelection,
-          })
-          showToast({
-            variant: "error",
-            title: language.t("prompt.toast.sessionCreateFailed.title"),
-            description: "工作树目录配置错误，请重试",
-          })
-          return
-        }
         client = sdk.createClient({
           directory: sessionDirectory,
           throwOnError: true,
@@ -368,7 +357,7 @@ export function createPromptSubmit(input: PromptSubmitInput) {
 
     let session = input.info()
     if (!session && isNewSession) {
-      session = await client.session
+      const created = await client.session
         .create()
         .then((x) => x.data ?? undefined)
         .catch((err) => {
@@ -378,8 +367,11 @@ export function createPromptSubmit(input: PromptSubmitInput) {
           })
           return undefined
         })
-      if (session) {
+      if (created) {
+        seed(sessionDirectory, created)
+        session = created
         if (shouldAutoAccept) permission.enableAutoAccept(session.id, sessionDirectory)
+        local.session.promote(sessionDirectory, session.id)
         layout.handoff.setTabs(base64Encode(sessionDirectory), session.id)
         navigate(`/${base64Encode(sessionDirectory)}/session/${session.id}`)
       }
@@ -397,7 +389,6 @@ export function createPromptSubmit(input: PromptSubmitInput) {
       providerID: currentModel.provider.id,
     }
     const agent = currentAgent.name
-    const variant = local.model.variant.current()
     const context = prompt.context.items().slice()
     const draft: FollowupDraft = {
       sessionID: session.id,
@@ -502,8 +493,6 @@ export function createPromptSubmit(input: PromptSubmitInput) {
 
     removeCommentItems(commentItems)
     clearInput()
-
-    requestAnimationFrame(() => input.onSubmitted?.())
 
     const waitForWorktree = async () => {
       const worktree = WorktreeState.get(sessionDirectory)

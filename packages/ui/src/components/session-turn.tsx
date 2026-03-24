@@ -5,10 +5,10 @@ import { useFileComponent } from "../context/file"
 
 import { Binary } from "@opencode-ai/util/binary"
 import { getDirectory, getFilename } from "@opencode-ai/util/path"
-import { createEffect, createMemo, createSignal, For, on, onCleanup, ParentProps, Show } from "solid-js"
+import { createEffect, createMemo, createSignal, For, on, ParentProps, Show } from "solid-js"
 import { createStore } from "solid-js/store"
 import { Dynamic } from "solid-js/web"
-import { AssistantParts, Message, MessageDivider, Part, PART_MAPPING, type UserActions } from "./message-part"
+import { AssistantParts, Message, MessageDivider, PART_MAPPING, type UserActions } from "./message-part"
 import { Card } from "./card"
 import { Accordion } from "./accordion"
 import { StickyAccordionHeader } from "./sticky-accordion-header"
@@ -18,7 +18,7 @@ import { Icon } from "./icon"
 import { TextShimmer } from "./text-shimmer"
 import { SessionRetry } from "./session-retry"
 import { TextReveal } from "./text-reveal"
-import { createAutoScroll, suppressAutoScrollResize } from "../hooks"
+import { createAutoScroll } from "../hooks"
 import { useI18n } from "../context/i18n"
 
 function record(value: unknown): value is Record<string, unknown> {
@@ -87,80 +87,10 @@ function list<T>(value: T[] | undefined | null, fallback: T[]) {
 
 const hidden = new Set(["todowrite", "todoread"])
 
-const builtin = new Set([
-  "apply_patch",
-  "bash",
-  "batch",
-  "codesearch",
-  "edit",
-  "glob",
-  "grep",
-  "invalid",
-  "list",
-  "lsp",
-  "plan_exit",
-  "question",
-  "read",
-  "skill",
-  "task",
-  "todoread",
-  "todowrite",
-  "webfetch",
-  "websearch",
-  "write",
-])
-
-function text(value: unknown) {
-  if (typeof value !== "string") return
-  const next = value.trim()
-  if (!next) return
-  return next
-}
-
-function hook(input: Record<string, unknown>, metadata: Record<string, unknown>) {
-  const keys = ["hook", "hook_name", "hookName", "event", "name"]
-  for (const src of [metadata, input]) {
-    for (const key of keys) {
-      const value = text(src?.[key])
-      if (!value) continue
-      if (value.includes("-")) return value
-      if (value === "session-start") return value
-    }
-  }
-
-  const desc = text(input.description) ?? text(metadata.description)
-  if (!desc) return
-  const match = desc.match(/([a-z0-9]+(?:-[a-z0-9]+){1,})/i)
-  if (!match?.[1]) return
-  return match[1]
-}
-
-function hookMeta(input: Record<string, unknown>, metadata: Record<string, unknown>) {
-  const keys = ["hook", "hook_name", "hookName", "hook_type", "hookType", "event", "stage", "phase"]
-  for (const src of [metadata, input]) {
-    for (const key of keys) {
-      if (text(src?.[key])) return true
-    }
-  }
-  return false
-}
-
-function custom(part: PartType) {
-  if (part.type !== "tool") return false
-  const tool = part.tool.toLowerCase()
-  if (!builtin.has(tool)) return true
-  if (tool !== "bash") return false
-  const metadata = part.state.status === "pending" ? {} : (part.state.metadata ?? {})
-  const input = part.state.input ?? {}
-  return hookMeta(input, metadata) || !!hook(input, metadata)
-}
-
-function partState(part: PartType, showReasoningSummaries: boolean, showCustomHookParts: boolean) {
+function partState(part: PartType, showReasoningSummaries: boolean) {
   if (part.type === "tool") {
-    const tool = part.tool.toLowerCase()
-    if (hidden.has(tool)) return
-    if (!showCustomHookParts && custom(part)) return
-    if (tool === "question" && part.state.status === "pending") return
+    if (hidden.has(part.tool)) return
+    if (part.tool === "question" && (part.state.status === "pending" || part.state.status === "running")) return
     return "visible" as const
   }
   if (part.type === "text") return part.text?.trim() ? ("visible" as const) : undefined
@@ -170,16 +100,6 @@ function partState(part: PartType, showReasoningSummaries: boolean, showCustomHo
   }
   if (PART_MAPPING[part.type]) return "visible" as const
   return
-}
-
-function ghost(parts: PartType[]) {
-  return !parts.some((part) => {
-    if (part.type === "step-start" || part.type === "step-finish") return false
-    if (part.type === "reasoning") return false
-    if (part.type === "text") return !!part.text?.trim()
-    if (part.type === "tool") return true
-    return !!PART_MAPPING[part.type]
-  })
 }
 
 function clean(value: string) {
@@ -222,12 +142,11 @@ export function SessionTurn(
   props: ParentProps<{
     sessionID: string
     messageID: string
+    messages?: MessageType[]
     actions?: UserActions
     showReasoningSummaries?: boolean
-    showCustomHookParts?: boolean
     shellToolDefaultOpen?: boolean
     editToolDefaultOpen?: boolean
-    markdownEager?: boolean
     active?: boolean
     status?: SessionStatus
     onUserInteracted?: () => void
@@ -248,7 +167,7 @@ export function SessionTurn(
   const emptyDiffs: FileDiff[] = []
   const idle = { type: "idle" as const }
 
-  const allMessages = createMemo(() => list(data.store.message?.[props.sessionID], emptyMessages))
+  const allMessages = createMemo(() => props.messages ?? list(data.store.message?.[props.sessionID], emptyMessages))
 
   const messageIndex = createMemo(() => {
     const messages = allMessages() ?? emptyMessages
@@ -274,22 +193,12 @@ export function SessionTurn(
     return msg
   })
 
-  const status = createMemo(() => {
-    if (props.status !== undefined) return props.status
-    if (typeof props.active === "boolean" && !props.active) return idle
-    return data.store.session_status[props.sessionID] ?? idle
-  })
-
   const pending = createMemo(() => {
-    const busy = status().type !== "idle"
     if (typeof props.active === "boolean") return
     const messages = allMessages() ?? emptyMessages
-    return messages.findLast((item): item is AssistantMessage => {
-      if (item.role !== "assistant") return false
-      if (typeof item.time.completed === "number") return false
-      if (busy) return true
-      return !ghost(list(data.store.part?.[item.id], emptyParts))
-    })
+    return messages.findLast(
+      (item): item is AssistantMessage => item.role === "assistant" && typeof item.time.completed !== "number",
+    )
   })
 
   const pendingUser = createMemo(() => {
@@ -339,10 +248,6 @@ export function SessionTurn(
   })
   const open = () => state.open
   const expanded = () => state.expanded
-  const onOpenChange = (value: boolean) => {
-    suppressAutoScrollResize()
-    setState("open", value)
-  }
 
   createEffect(
     on(
@@ -385,6 +290,23 @@ export function SessionTurn(
   const error = createMemo(
     () => assistantMessages().find((m) => m.error && m.error.name !== "MessageAbortedError")?.error,
   )
+  const showAssistantCopyPartID = createMemo(() => {
+    const messages = assistantMessages()
+
+    for (let i = messages.length - 1; i >= 0; i--) {
+      const message = messages[i]
+      if (!message) continue
+
+      const parts = list(data.store.part?.[message.id], emptyParts)
+      for (let j = parts.length - 1; j >= 0; j--) {
+        const part = parts[j]
+        if (!part || part.type !== "text" || !part.text?.trim()) continue
+        return part.id
+      }
+    }
+
+    return undefined
+  })
   const errorText = createMemo(() => {
     const msg = error()?.data?.message
     if (typeof msg === "string") return unwrap(msg)
@@ -392,83 +314,59 @@ export function SessionTurn(
     return unwrap(String(msg))
   })
 
-  // Debounced working state to prevent flashing when status and time.completed update out of sync
-  const [stableWorking, setStableWorking] = createSignal(false)
-  let workingDebounceTimer: ReturnType<typeof setTimeout> | undefined
-
-  createEffect(() => {
-    const isWorking = status().type !== "idle" && active()
-
-    if (isWorking) {
-      // Immediately enter working state
-      if (workingDebounceTimer) {
-        clearTimeout(workingDebounceTimer)
-        workingDebounceTimer = undefined
-      }
-      setStableWorking(true)
-    } else {
-      // Delay exiting working state to avoid flashing during async state updates
-      if (workingDebounceTimer) clearTimeout(workingDebounceTimer)
-      workingDebounceTimer = setTimeout(() => {
-        setStableWorking(false)
-        workingDebounceTimer = undefined
-      }, 200)
-    }
+  const status = createMemo(() => {
+    if (props.status !== undefined) return props.status
+    if (typeof props.active === "boolean" && !props.active) return idle
+    return data.store.session_status[props.sessionID] ?? idle
   })
-
-  onCleanup(() => {
-    if (workingDebounceTimer) {
-      clearTimeout(workingDebounceTimer)
-      workingDebounceTimer = undefined
-    }
-  })
-
-  const working = createMemo(() => stableWorking())
+  const working = createMemo(() => status().type !== "idle" && active())
   const showReasoningSummaries = createMemo(() => props.showReasoningSummaries ?? true)
-  const assistantSummary = createMemo(() => {
-    let copy: string | undefined
-    let visible = 0
-    let headingText: string | undefined
-    let end: number | undefined
-
-    for (const message of assistantMessages()) {
-      const completed = message.time.completed
-      if (typeof completed === "number") end = end === undefined ? completed : Math.max(end, completed)
-
-      const parts = list(data.store.part?.[message.id], emptyParts)
-      for (const part of parts) {
-        const state = partState(part, showReasoningSummaries(), props.showCustomHookParts ?? true)
-        if (state !== "visible") continue
-        visible++
-        if (part.type === "text" && part.text?.trim()) copy = part.id
-        if (part.type === "reasoning") {
-          const value = heading(part.text)
-          if (value) headingText = value
-        }
-      }
-    }
-
-    return { copy, visible, headingText, end }
-  })
 
   const assistantCopyPartID = createMemo(() => {
     if (working()) return null
-    return assistantSummary().copy ?? null
+    return showAssistantCopyPartID() ?? null
   })
   const turnDurationMs = createMemo(() => {
     const start = message()?.time.created
     if (typeof start !== "number") return undefined
 
-    const end = assistantSummary().end
+    const end = assistantMessages().reduce<number | undefined>((max, item) => {
+      const completed = item.time.completed
+      if (typeof completed !== "number") return max
+      if (max === undefined) return completed
+      return Math.max(max, completed)
+    }, undefined)
 
     if (typeof end !== "number") return undefined
     if (end < start) return undefined
     return end - start
   })
+  const assistantDerived = createMemo(() => {
+    let visible = 0
+    let tail: "text" | "other" | undefined
+    let reason: string | undefined
+    const show = showReasoningSummaries()
+    for (const message of assistantMessages()) {
+      for (const part of list(data.store.part?.[message.id], emptyParts)) {
+        if (partState(part, show) === "visible") {
+          visible++
+          tail = part.type === "text" ? "text" : "other"
+        }
+        if (part.type === "reasoning" && part.text) {
+          const h = heading(part.text)
+          if (h) reason = h
+        }
+      }
+    }
+    return { visible, tail, reason }
+  })
+  const assistantVisible = createMemo(() => assistantDerived().visible)
+  const assistantTailVisible = createMemo(() => assistantDerived().tail)
+  const reasoningHeading = createMemo(() => assistantDerived().reason)
   const showThinking = createMemo(() => {
     if (!working() || !!error()) return false
     if (status().type === "retry") return false
-    if (showReasoningSummaries()) return assistantSummary().visible === 0
+    if (showReasoningSummaries()) return assistantVisible() === 0
     return true
   })
 
@@ -488,174 +386,151 @@ export function SessionTurn(
       >
         <div onClick={autoScroll.handleInteraction}>
           <Show when={message()}>
-            {(msg) => (
-              <div
-                ref={autoScroll.contentRef}
-                data-message={msg().id}
-                data-slot="session-turn-message-container"
-                class={props.classes?.container}
-              >
-                <div data-slot="session-turn-message-content" aria-live="off">
-                  <Message
-                    message={msg()}
-                    parts={parts()}
-                    actions={props.actions}
-                    interrupted={interrupted()}
+            <div
+              ref={autoScroll.contentRef}
+              data-message={message()!.id}
+              data-slot="session-turn-message-container"
+              class={props.classes?.container}
+            >
+              <div data-slot="session-turn-message-content" aria-live="off">
+                <Message message={message()!} parts={parts()} actions={props.actions} />
+              </div>
+              <Show when={divider()}>
+                <div data-slot="session-turn-compaction">
+                  <MessageDivider label={divider()} />
+                </div>
+              </Show>
+              <Show when={assistantMessages().length > 0}>
+                <div data-slot="session-turn-assistant-content" aria-hidden={working()}>
+                  <AssistantParts
+                    messages={assistantMessages()}
+                    showAssistantCopyPartID={assistantCopyPartID()}
+                    turnDurationMs={turnDurationMs()}
+                    working={working()}
                     showReasoningSummaries={showReasoningSummaries()}
-                    showCustomHookParts={props.showCustomHookParts}
-                    markdownEager={props.markdownEager}
+                    shellToolDefaultOpen={props.shellToolDefaultOpen}
+                    editToolDefaultOpen={props.editToolDefaultOpen}
                   />
                 </div>
-                <Show when={divider()}>
-                  <div data-slot="session-turn-compaction">
-                    <MessageDivider label={divider()} />
-                  </div>
-                </Show>
-                <Show when={compaction()}>
-                  {(part) => (
-                    <div data-slot="session-turn-compaction">
-                      <Part part={part()} message={msg()} hideDetails markdownEager={props.markdownEager} />
-                    </div>
-                  )}
-                </Show>
-                <Show when={assistantMessages().length > 0}>
-                  <div data-slot="session-turn-assistant-content" aria-hidden={working()}>
-                    <AssistantParts
-                      messages={assistantMessages()}
-                      showAssistantCopyPartID={assistantCopyPartID()}
-                      turnDurationMs={turnDurationMs()}
-                      working={working()}
-                      showReasoningSummaries={showReasoningSummaries()}
-                      showCustomHookParts={props.showCustomHookParts}
-                      shellToolDefaultOpen={props.shellToolDefaultOpen}
-                      editToolDefaultOpen={props.editToolDefaultOpen}
-                      markdownEager={props.markdownEager}
+              </Show>
+              <Show when={showThinking()}>
+                <div data-slot="session-turn-thinking">
+                  <TextShimmer text={i18n.t("ui.sessionTurn.status.thinking")} />
+                  <Show when={!showReasoningSummaries()}>
+                    <TextReveal
+                      text={reasoningHeading()}
+                      class="session-turn-thinking-heading"
+                      travel={25}
+                      duration={700}
                     />
-                  </div>
-                </Show>
-                <SessionRetry status={status()} show={active()} />
-                <Show when={edited() > 0 && !working()}>
-                  <div data-slot="session-turn-diffs">
-                    <Collapsible open={open()} onOpenChange={onOpenChange} variant="ghost">
-                      <Collapsible.Trigger>
-                        <div data-component="session-turn-diffs-trigger">
-                          <div data-slot="session-turn-diffs-title">
-                            <span data-slot="session-turn-diffs-label">
-                              {i18n.t("ui.sessionReview.change.modified")}
-                            </span>
-                            <span data-slot="session-turn-diffs-count">
-                              {edited()} {i18n.t(edited() === 1 ? "ui.common.file.one" : "ui.common.file.other")}
-                            </span>
-                            <div data-slot="session-turn-diffs-meta">
-                              <DiffChanges changes={diffs()} variant="bars" />
-                              <Collapsible.Arrow />
-                            </div>
+                  </Show>
+                </div>
+              </Show>
+              <SessionRetry status={status()} show={active()} />
+              <Show when={edited() > 0 && !working()}>
+                <div data-slot="session-turn-diffs">
+                  <Collapsible open={open()} onOpenChange={(value) => setState("open", value)} variant="ghost">
+                    <Collapsible.Trigger>
+                      <div data-component="session-turn-diffs-trigger">
+                        <div data-slot="session-turn-diffs-title">
+                          <span data-slot="session-turn-diffs-label">{i18n.t("ui.sessionReview.change.modified")}</span>
+                          <span data-slot="session-turn-diffs-count">
+                            {edited()} {i18n.t(edited() === 1 ? "ui.common.file.one" : "ui.common.file.other")}
+                          </span>
+                          <div data-slot="session-turn-diffs-meta">
+                            <DiffChanges changes={diffs()} variant="bars" />
+                            <Collapsible.Arrow />
                           </div>
                         </div>
-                      </Collapsible.Trigger>
-                      <Collapsible.Content>
-                        <Show when={open()}>
-                          <div data-component="session-turn-diffs-content">
-                            <Accordion
-                              multiple
-                              style={{ "--sticky-accordion-offset": "40px" }}
-                              value={expanded()}
-                              onChange={(value) =>
-                                setState("expanded", Array.isArray(value) ? value : value ? [value] : [])
-                              }
-                            >
-                              <For each={diffs()}>
-                                {(diff) => {
-                                  const active = createMemo(() => expanded().includes(diff.file))
-                                  const [visible, setVisible] = createSignal(false)
+                      </div>
+                    </Collapsible.Trigger>
+                    <Collapsible.Content>
+                      <Show when={open()}>
+                        <div data-component="session-turn-diffs-content">
+                          <Accordion
+                            multiple
+                            style={{ "--sticky-accordion-offset": "40px" }}
+                            value={expanded()}
+                            onChange={(value) =>
+                              setState("expanded", Array.isArray(value) ? value : value ? [value] : [])
+                            }
+                          >
+                            <For each={diffs()}>
+                              {(diff) => {
+                                const active = createMemo(() => expanded().includes(diff.file))
+                                const [visible, setVisible] = createSignal(false)
 
-                                  createEffect(
-                                    on(
-                                      active,
-                                      (value) => {
-                                        if (!value) {
-                                          setVisible(false)
-                                          return
-                                        }
+                                createEffect(
+                                  on(
+                                    active,
+                                    (value) => {
+                                      if (!value) {
+                                        setVisible(false)
+                                        return
+                                      }
 
-                                        requestAnimationFrame(() => {
-                                          if (!active()) return
-                                          setVisible(true)
-                                        })
-                                      },
-                                      { defer: true },
-                                    ),
-                                  )
+                                      requestAnimationFrame(() => {
+                                        if (!active()) return
+                                        setVisible(true)
+                                      })
+                                    },
+                                    { defer: true },
+                                  ),
+                                )
 
-                                  return (
-                                    <Accordion.Item value={diff.file}>
-                                      <StickyAccordionHeader>
-                                        <Accordion.Trigger>
-                                          <div data-slot="session-turn-diff-trigger">
-                                            <span data-slot="session-turn-diff-path">
-                                              <Show when={diff.file.includes("/")}>
-                                                <span data-slot="session-turn-diff-directory">
-                                                  {`\u202A${getDirectory(diff.file)}\u202C`}
-                                                </span>
-                                              </Show>
-                                              <span data-slot="session-turn-diff-filename">
-                                                {getFilename(diff.file)}
+                                return (
+                                  <Accordion.Item value={diff.file}>
+                                    <StickyAccordionHeader>
+                                      <Accordion.Trigger>
+                                        <div data-slot="session-turn-diff-trigger">
+                                          <span data-slot="session-turn-diff-path">
+                                            <Show when={diff.file.includes("/")}>
+                                              <span data-slot="session-turn-diff-directory">
+                                                {`\u202A${getDirectory(diff.file)}\u202C`}
                                               </span>
+                                            </Show>
+                                            <span data-slot="session-turn-diff-filename">{getFilename(diff.file)}</span>
+                                          </span>
+                                          <div data-slot="session-turn-diff-meta">
+                                            <span data-slot="session-turn-diff-changes">
+                                              <DiffChanges changes={diff} />
                                             </span>
-                                            <div data-slot="session-turn-diff-meta">
-                                              <span data-slot="session-turn-diff-changes">
-                                                <DiffChanges changes={diff} />
-                                              </span>
-                                              <span data-slot="session-turn-diff-chevron">
-                                                <Icon name="chevron-down" size="small" />
-                                              </span>
-                                            </div>
+                                            <span data-slot="session-turn-diff-chevron">
+                                              <Icon name="chevron-down" size="small" />
+                                            </span>
                                           </div>
-                                        </Accordion.Trigger>
-                                      </StickyAccordionHeader>
-                                      <Accordion.Content>
-                                        <Show when={visible()}>
-                                          <div data-slot="session-turn-diff-view" data-scrollable>
-                                            <Dynamic
-                                              component={fileComponent}
-                                              mode="diff"
-                                              before={{ name: diff.file, contents: diff.before }}
-                                              after={{ name: diff.file, contents: diff.after }}
-                                            />
-                                          </div>
-                                        </Show>
-                                      </Accordion.Content>
-                                    </Accordion.Item>
-                                  )
-                                }}
-                              </For>
-                            </Accordion>
-                          </div>
-                        </Show>
-                      </Collapsible.Content>
-                    </Collapsible>
-                  </div>
-                </Show>
-                <Show when={error()}>
-                  <Card variant="error" class="error-card">
-                    {errorText()}
-                  </Card>
-                </Show>
-                <Show when={showThinking()}>
-                  <div data-slot="session-turn-thinking">
-                    <TextShimmer text={i18n.t("ui.sessionTurn.status.thinking")} />
-                    <Show when={!showReasoningSummaries()}>
-                      <TextReveal
-                        text={assistantSummary().headingText}
-                        class="session-turn-thinking-heading"
-                        travel={25}
-                        duration={700}
-                      />
-                    </Show>
-                  </div>
-                </Show>
-              </div>
-            )}
+                                        </div>
+                                      </Accordion.Trigger>
+                                    </StickyAccordionHeader>
+                                    <Accordion.Content>
+                                      <Show when={visible()}>
+                                        <div data-slot="session-turn-diff-view" data-scrollable>
+                                          <Dynamic
+                                            component={fileComponent}
+                                            mode="diff"
+                                            before={{ name: diff.file, contents: diff.before }}
+                                            after={{ name: diff.file, contents: diff.after }}
+                                          />
+                                        </div>
+                                      </Show>
+                                    </Accordion.Content>
+                                  </Accordion.Item>
+                                )
+                              }}
+                            </For>
+                          </Accordion>
+                        </div>
+                      </Show>
+                    </Collapsible.Content>
+                  </Collapsible>
+                </div>
+              </Show>
+              <Show when={error()}>
+                <Card variant="error" class="error-card">
+                  {errorText()}
+                </Card>
+              </Show>
+            </div>
           </Show>
           {props.children}
         </div>
