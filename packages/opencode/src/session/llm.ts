@@ -168,7 +168,6 @@ export namespace LLM {
       "experimental.chat.system.transform",
       { sessionID: input.sessionID, model: input.model },
       { system },
-      input.hooks === false ? undefined : hookOpts(input.sessionID, input.user.id),
     )
     // rejoin to maintain 2-part structure for caching if header unchanged
     if (system.length > 2 && system[0] === header) {
@@ -228,7 +227,6 @@ export namespace LLM {
         topK: ProviderTransform.topK(input.model),
         options,
       },
-      input.hooks === false ? undefined : hookOpts(input.sessionID, input.user.id),
     )
 
     const { headers } = await Plugin.trigger(
@@ -243,7 +241,6 @@ export namespace LLM {
       {
         headers: {},
       },
-      input.hooks === false ? undefined : hookOpts(input.sessionID, input.user.id),
     )
 
     const maxOutputTokens =

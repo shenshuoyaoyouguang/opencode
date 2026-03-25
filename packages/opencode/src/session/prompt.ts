@@ -551,7 +551,6 @@ export namespace SessionPrompt {
             callID: part.id,
           },
           { args: taskArgs },
-          hookOpts(sessionID, assistantMessage.id),
         )
         let executionError: Error | undefined
         const taskAgent = await Agent.get(task.agent)
@@ -611,7 +610,6 @@ export namespace SessionPrompt {
             args: taskArgs,
           },
           result,
-          hookOpts(sessionID, assistantMessage.id),
         )
         assistantMessage.finish = "tool-calls"
         assistantMessage.time.completed = Date.now()
@@ -836,7 +834,6 @@ export namespace SessionPrompt {
           },
         },
         {},
-        hookOpts(sessionID, processor.message.id),
       )
 
       const result = await processor.process({
@@ -869,7 +866,6 @@ export namespace SessionPrompt {
           finish: processor.message.finish,
           error: processor.message.error,
         },
-        hookOpts(sessionID, processor.message.id),
       )
 
       // If structured output was captured, save it and exit immediately
@@ -986,18 +982,17 @@ export namespace SessionPrompt {
         inputSchema: jsonSchema(schema as any),
         async execute(args, options) {
           const ctx = context(args, options)
-          await Plugin.trigger(
-            "tool.execute.before",
-            {
-              tool: item.id,
-              sessionID: ctx.sessionID,
-              callID: ctx.callID,
-            },
-            {
-              args,
-            },
-            hookOpts(ctx.sessionID, input.processor.message.id),
-          )
+await Plugin.trigger(
+              "tool.execute.before",
+              {
+                tool: item.id,
+                sessionID: ctx.sessionID,
+                callID: ctx.callID,
+              },
+              {
+                args,
+              },
+            )
           const result = await item.execute(args, ctx)
           const output = {
             ...result,
@@ -1017,7 +1012,6 @@ export namespace SessionPrompt {
               args,
             },
             output,
-            hookOpts(ctx.sessionID, input.processor.message.id),
           )
           return output
         },
@@ -1047,7 +1041,6 @@ export namespace SessionPrompt {
           {
             args,
           },
-          hookOpts(ctx.sessionID, input.processor.message.id),
         )
 
         await ctx.ask({
@@ -1068,7 +1061,6 @@ export namespace SessionPrompt {
             args,
           },
           result,
-          hookOpts(ctx.sessionID, input.processor.message.id),
         )
 
         const textParts: string[] = []
@@ -1521,7 +1513,6 @@ export namespace SessionPrompt {
         message: info,
         parts,
       },
-      hookOpts(input.sessionID, info.id),
     )
 
     const parsedInfo = MessageV2.Info.safeParse(info)
@@ -1874,7 +1865,6 @@ NOTE: At any point in time through this workflow you should feel free to ask the
       "shell.env",
       { cwd, sessionID: input.sessionID, callID: part.callID },
       { env: {} },
-      hookOpts(input.sessionID, msg.id),
     )
     const proc = spawn(shell, args, {
       cwd,
@@ -2160,7 +2150,6 @@ NOTE: At any point in time through this workflow you should feel free to ask the
         arguments: input.arguments,
       },
       { parts },
-      input.messageID ? hookOpts(input.sessionID, input.messageID) : undefined,
     )
 
     const result = (await prompt({

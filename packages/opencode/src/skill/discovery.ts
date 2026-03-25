@@ -5,6 +5,7 @@ import { withTransientReadRetry } from "@/util/effect-http-client"
 import { AppFileSystem } from "@/filesystem"
 import { Global } from "../global"
 import { Log } from "../util/log"
+import { makeRunPromise } from "@/effect/run-service"
 
 export namespace Discovery {
   const skillConcurrency = 4
@@ -113,4 +114,10 @@ export namespace Discovery {
     Layer.provide(AppFileSystem.defaultLayer),
     Layer.provide(NodePath.layer),
   )
+
+  const runPromise = makeRunPromise(Service, defaultLayer)
+
+  export async function pull(url: string): Promise<string[]> {
+    return runPromise((s) => s.pull(url))
+  }
 }

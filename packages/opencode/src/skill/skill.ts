@@ -16,7 +16,7 @@ import { Discovery } from "./discovery"
 import { Glob } from "../util/glob"
 import { pathToFileURL } from "url"
 import type { Agent } from "@/agent/agent"
-import { PermissionNext } from "@/permission/next"
+import { Permission } from "@/permission"
 
 export namespace Skill {
   const log = Log.create({ service: "skill" })
@@ -201,7 +201,7 @@ export namespace Skill {
   export async function available(agent?: Agent.Info) {
     const list = await all()
     if (!agent) return list
-    return list.filter((skill) => PermissionNext.evaluate("skill", skill.name, agent.permission).action !== "deny")
+    return list.filter((skill) => Permission.evaluate("skill", skill.name, agent.permission).action !== "deny")
   }
 
   export function fmt(list: Info[], opts: { verbose: boolean }) {

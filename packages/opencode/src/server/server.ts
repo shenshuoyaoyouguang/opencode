@@ -330,7 +330,10 @@ export namespace Server {
           },
         }),
         async (c) => {
-          return c.json(await Vcs.info())
+          const branch = await Vcs.branch()
+          return c.json({
+            branch,
+          })
         },
       )
       .get(
