@@ -617,6 +617,7 @@ export const dict = {
 
   "sidebar.menu.toggle": "切换菜单",
   "sidebar.nav.projectsAndSessions": "项目和会话",
+  "sidebar.config": "配置",
   "sidebar.settings": "设置",
   "sidebar.openclaw": "OpenClaw",
   "sidebar.help": "帮助",

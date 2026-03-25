@@ -146,12 +146,10 @@ describe("layout workspace helpers", () => {
 
   test("detects project permissions with a filter", () => {
     const result = hasProjectPermissions(
-      [session({ id: "root", directory: "/root" }), session({ id: "child", directory: "/root", parentID: "root" })],
       {
         root: [{ id: "perm-root" } as PermissionRequest, { id: "perm-hidden" } as PermissionRequest],
         child: [{ id: "perm-child" } as PermissionRequest],
       },
-      "/root",
       (item: PermissionRequest) => item.id === "perm-child",
     )
 
@@ -160,11 +158,9 @@ describe("layout workspace helpers", () => {
 
   test("ignores project permissions filtered out", () => {
     const result = hasProjectPermissions(
-      [session({ id: "root", directory: "/root" })],
       {
         root: [{ id: "perm-root" } as PermissionRequest],
       },
-      "/root",
       () => false,
     )
 

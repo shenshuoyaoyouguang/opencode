@@ -1227,6 +1227,11 @@ export default function Layout(props: ParentProps) {
     })
   }
 
+  function openConfig() {
+    if (!params.dir) return
+    navigate(`/${params.dir}/config`)
+  }
+
   function projectRoot(directory: string) {
     const key = workspaceKey(directory)
     const project = layout.projects
@@ -2364,6 +2369,8 @@ export default function Layout(props: ParentProps) {
       openProjectKeybind={() => command.keybind("project.open")}
       onOpenProject={chooseProject}
       renderProjectOverlay={projectOverlay}
+      configLabel={() => language.t("sidebar.config")}
+      onOpenConfig={openConfig}
       settingsLabel={() => language.t("sidebar.settings")}
       settingsKeybind={() => command.keybind("settings.open")}
       onOpenSettings={openSettings}

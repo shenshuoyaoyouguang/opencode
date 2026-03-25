@@ -52,9 +52,9 @@ export const SessionQuestionDock: Component<{ request: QuestionRequest; onSubmit
 
     if (multi()) {
       setStore("answers", store.tab, (current = []) => {
-        const removed = prev ? current.filter((item) => item.trim() !== prev) : current
+        const removed = prev ? current.filter((item) => (typeof item === "string" ? item.trim() !== prev : item.type !== "image")) : current
         if (!next) return removed
-        if (removed.some((item) => item.trim() === next)) return removed
+        if (removed.some((item) => typeof item === "string" && item.trim() === next)) return removed
         return [...removed, next]
       })
       return
@@ -197,7 +197,7 @@ export const SessionQuestionDock: Component<{ request: QuestionRequest; onSubmit
     }
 
     const value = input().trim()
-    if (value) setStore("answers", store.tab, (current = []) => current.filter((item) => item.trim() !== value))
+    if (value) setStore("answers", store.tab, (current = []) => current.filter((item) => typeof item !== "string" || item.trim() !== value))
     setStore("editing", false)
   }
 

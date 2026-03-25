@@ -240,6 +240,7 @@ export const dict = {
   "common.connect": "Connect",
   "common.disconnect": "Disconnect",
   "common.submit": "Submit",
+  "common.continue": "Continue",
   "common.save": "Save",
   "common.saving": "Saving...",
   "common.default": "Default",
@@ -705,6 +706,7 @@ export const dict = {
 
   "sidebar.menu.toggle": "Toggle menu",
   "sidebar.nav.projectsAndSessions": "Projects and sessions",
+  "sidebar.config": "Config",
   "sidebar.settings": "Settings",
   "sidebar.openclaw": "OpenClaw",
   "sidebar.help": "Help",

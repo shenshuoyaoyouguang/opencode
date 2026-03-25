@@ -70,6 +70,7 @@
     "solid-list": "catalog:",
     "tailwindcss": "catalog:",
     "virtua": "catalog:",
-    "zod": "catalog:"
+    "zod": "catalog:",
+    "jsonc-parser": "^3.0.0"
   }
 }

@@ -246,7 +246,6 @@ export function SessionComposerRegion(props: {
                 onQueue={props.followup?.onQueue}
                 onAbort={props.followup?.onAbort}
                 onSubmit={props.onSubmit}
-                onSubmitted={props.onSubmitted}
               />
             </div>
           </Show>
