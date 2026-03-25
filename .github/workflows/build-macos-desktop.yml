@@ -16,14 +16,14 @@ jobs:
   build-cli:
     runs-on: ubuntu-latest
     env:
-      APP_VERSION: ${{ inputs.version != '' && inputs.version || github.ref_name }}
+      APP_VERSION: ${{ inputs.version }}
     steps:
       - uses: actions/checkout@v4
 
       - name: Setup Bun
         uses: oven-sh/setup-bun@v2
         with:
-          bun-version: 1.3.10
+          bun-version: 1.3.11
 
       - name: Install dependencies
         run: bun install
@@ -44,15 +44,14 @@ jobs:
     needs: build-cli
     runs-on: macos-latest
     env:
-      APP_VERSION: ${{ inputs.version != '' && inputs.version || github.ref_name }}
-      PKG_VERSION: ${{ startsWith(inputs.version != '' && inputs.version || github.ref_name, 'v') && format('{0}', (inputs.version != '' && inputs.version || github.ref_name)) || (inputs.version != '' && inputs.version || github.ref_name) }}
+      APP_VERSION: ${{ inputs.version }}
     steps:
       - uses: actions/checkout@v4
 
       - name: Setup Bun
         uses: oven-sh/setup-bun@v2
         with:
-          bun-version: 1.3.10
+          bun-version: 1.3.11
 
       - name: Install Rust stable
         uses: dtolnay/rust-toolchain@stable
@@ -76,10 +75,12 @@ jobs:
       - name: Prepare Desktop
         run: |
           cd packages/desktop
-          VERSION="${APP_VERSION#v}"
-          # Update version
-          jq --arg version "$VERSION" '.version = $version' package.json > package.json.tmp
-          mv package.json.tmp package.json
+          # Update version only when a valid release version is provided
+          if [ -n "$APP_VERSION" ]; then
+            VERSION="${APP_VERSION#v}"
+            jq --arg version "$VERSION" '.version = $version' package.json > package.json.tmp
+            mv package.json.tmp package.json
+          fi
 
           # List downloaded files for debugging
           echo "Downloaded files:"
@@ -129,14 +130,14 @@ jobs:
     needs: [build-cli, build-macos-x64]
     runs-on: macos-latest
     env:
-      APP_VERSION: ${{ inputs.version != '' && inputs.version || github.ref_name }}
+      APP_VERSION: ${{ inputs.version }}
     steps:
       - uses: actions/checkout@v4
 
       - name: Setup Bun
         uses: oven-sh/setup-bun@v2
         with:
-          bun-version: 1.3.10
+          bun-version: 1.3.11
 
       - name: Install Rust stable
         uses: dtolnay/rust-toolchain@stable
@@ -160,10 +161,12 @@ jobs:
       - name: Prepare Desktop
         run: |
           cd packages/desktop
-          VERSION="${APP_VERSION#v}"
-          # Update version
-          jq --arg version "$VERSION" '.version = $version' package.json > package.json.tmp
-          mv package.json.tmp package.json
+          # Update version only when a valid release version is provided
+          if [ -n "$APP_VERSION" ]; then
+            VERSION="${APP_VERSION#v}"
+            jq --arg version "$VERSION" '.version = $version' package.json > package.json.tmp
+            mv package.json.tmp package.json
+          fi
 
           # List downloaded files for debugging
           echo "Downloaded files:"
