@@ -527,8 +527,8 @@
         }
         padding: 12px;
         gap: 0;
-        background-color: var(--background-base);
-        border-right: 1px solid var(--border-weak-base);
+        background-color: color-mix(in oklch, var(--surface-raised-base) 76%, var(--background-base));
+        border-right: 1px solid color-mix(in oklch, var(--border-weak-base) 82%, transparent);
 
         &::after {
           display: none;

@@ -1,5 +1,9 @@
 import { type Component, type JSX } from "solid-js"
 
 export const SettingsList: Component<{ children: JSX.Element }> = (props) => {
-  return <div class="bg-surface-base px-4 rounded-lg">{props.children}</div>
+  return (
+    <div class="rounded-xl border border-border-weak-base bg-[color:color-mix(in_oklch,var(--surface-raised-base)_84%,transparent)] px-4 shadow-xs-border-base backdrop-blur-xl">
+      {props.children}
+    </div>
+  )
 }

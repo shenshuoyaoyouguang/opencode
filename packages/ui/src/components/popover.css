@@ -7,11 +7,11 @@
   min-width: 200px;
   max-width: 320px;
   border-radius: var(--radius-xl);
-  background-color: rgb(12 12 14 / 0.34);
-  border: 1px solid rgb(255 255 255 / 0.1);
+  background-color: color-mix(in oklch, var(--surface-float-base) 90%, transparent);
+  border: 1px solid color-mix(in oklch, var(--border-weak-base) 82%, transparent);
   background-clip: padding-box;
-  backdrop-filter: blur(40px) saturate(150%);
-  -webkit-backdrop-filter: blur(40px) saturate(150%);
+  backdrop-filter: blur(28px) saturate(130%);
+  -webkit-backdrop-filter: blur(28px) saturate(130%);
   box-shadow: var(--shadow-lg-border-base);
 
   transform-origin: var(--kb-popover-content-transform-origin);
@@ -21,11 +21,11 @@
   }
 
   &[data-closed] {
-    animation: popover-close 0.15s ease-out;
+    animation: popover-close calc(var(--transition-duration, 0.3s) * 0.5) ease-out;
   }
 
   &[data-expanded] {
-    animation: popover-open 0.15s ease-out;
+    animation: popover-open var(--transition-duration, 0.3s) ease-out;
   }
 
   [data-slot="popover-header"] {

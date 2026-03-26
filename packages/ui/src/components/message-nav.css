@@ -86,7 +86,7 @@
 }
 
 [data-slot="message-nav-item"]:hover [data-slot="message-nav-message-button"] {
-  background-color: var(--surface-base);
+  background-color: color-mix(in oklch, var(--surface-raised-base) 72%, transparent);
 }
 [data-slot="message-nav-item"]:active [data-slot="message-nav-message-button"] {
   background-color: var(--surface-base-active);
@@ -106,17 +106,14 @@
   justify-content: center;
   align-items: start;
   border-radius: var(--radius-md);
-  background: var(--surface-raised-stronger-non-alpha);
+  background: color-mix(in oklch, var(--surface-float-base) 88%, transparent);
+  border: 1px solid color-mix(in oklch, var(--border-weak-base) 82%, transparent);
   max-height: calc(100vh - 6rem);
   overflow-y: auto;
   overflow-x: hidden;
-
-  /* border/shadow-xs/base */
-  box-shadow:
-    0 0 0 1px var(--border-weak-base, rgba(17, 0, 0, 0.12)),
-    0 1px 2px -1px rgba(19, 16, 16, 0.04),
-    0 1px 2px 0 rgba(19, 16, 16, 0.06),
-    0 1px 3px 0 rgba(19, 16, 16, 0.08);
+  backdrop-filter: blur(24px) saturate(125%);
+  -webkit-backdrop-filter: blur(24px) saturate(125%);
+  box-shadow: var(--shadow-xs-border-base);
 
   * {
     margin: 0 !important;
