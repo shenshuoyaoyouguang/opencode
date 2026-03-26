@@ -167,8 +167,8 @@ describe("Question tool with image attachments", () => {
 
       // Verify the file part has the correct structure
       const filePart = fileParts[0] as any
-      expect(filePart).toHaveProperty("url")
-      expect(filePart.url).toContain("data:image/png;base64,")
+      expect(filePart).toHaveProperty("data")
+      expect(filePart.data).toContain("data:image/png;base64,")
     }
   })
 
@@ -269,11 +269,11 @@ describe("Question tool with image attachments", () => {
       expect(fileParts.length).toBeGreaterThan(0)
 
       const filePart = fileParts[0] as any
-      expect(filePart.url).toBeDefined()
-      expect(filePart.url).toContain("data:image/png;base64,")
+      expect(filePart.data).toBeDefined()
+      expect(filePart.data).toContain("data:image/png;base64,")
 
       // Verify there's only ONE data URL prefix
-      const dataUrlCount = (filePart.url.match(/data:image\/png;base64,/g) || []).length
+      const dataUrlCount = (filePart.data.match(/data:image\/png;base64,/g) || []).length
       expect(dataUrlCount).toBe(1)
     }
   })

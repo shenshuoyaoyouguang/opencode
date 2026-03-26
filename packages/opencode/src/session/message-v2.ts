@@ -677,7 +677,7 @@ export namespace MessageV2 {
             } else {
               userMessage.parts.push({
                 type: "file",
-                url: part.url,
+                url: media(part.url),
                 mediaType: part.mime,
                 filename: part.filename,
               })
