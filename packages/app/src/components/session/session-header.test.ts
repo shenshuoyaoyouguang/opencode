@@ -29,7 +29,6 @@ beforeAll(async () => {
   }))
   mock.module("@/context/server", () => ({ useServer: () => ({ isLocal: () => true }) }))
   mock.module("@/context/terminal", () => ({ useTerminal: () => ({ active: () => undefined }) }))
-  mock.module("@/pages/session/helpers", () => ({ focusTerminalById: () => undefined }))
   mock.module("@/pages/session/session-layout", () => ({
     useSessionLayout: () => ({
       params: { dir: "" },

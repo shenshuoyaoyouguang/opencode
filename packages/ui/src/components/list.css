@@ -336,15 +336,15 @@
 [data-component="dialog"] [data-component="list"],
 [data-component="popover-content"] [data-component="list"] {
   [data-slot="list-search"] {
-    background: rgb(255 255 255 / 0.05);
-    border: 1px solid rgb(255 255 255 / 0.06);
+    background: color-mix(in oklch, var(--surface-base) 74%, transparent);
+    border: 1px solid color-mix(in oklch, var(--border-weak-base) 72%, transparent);
   }
 
   [data-slot="list-header"] {
-    background: rgb(12 12 14 / 0.22);
+    background: color-mix(in oklch, var(--surface-float-base) 74%, transparent);
 
     &::after {
-      background: linear-gradient(to bottom, rgb(12 12 14 / 0.22), transparent);
+      background: linear-gradient(to bottom, color-mix(in oklch, var(--surface-float-base) 74%, transparent), transparent);
     }
   }
 }

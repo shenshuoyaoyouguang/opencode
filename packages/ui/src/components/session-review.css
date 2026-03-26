@@ -21,7 +21,7 @@
 
   [data-slot="session-review-header"] {
     z-index: 120;
-    background-color: var(--background-stronger);
+    background-color: color-mix(in oklch, var(--background-stronger) 88%, transparent);
     height: 40px;
     padding-bottom: 8px;
     flex-shrink: 0;
@@ -29,6 +29,8 @@
     justify-content: space-between;
     align-items: center;
     align-self: stretch;
+    backdrop-filter: blur(12px);
+    -webkit-backdrop-filter: blur(12px);
   }
 
   [data-slot="session-review-title"] {
@@ -213,7 +215,9 @@
 
   [data-slot="session-review-large-diff"] {
     padding: 12px;
-    background: var(--background-stronger);
+    background: color-mix(in oklch, var(--surface-raised-base) 72%, var(--background-stronger));
+    border: 1px solid color-mix(in oklch, var(--border-weaker-base) 88%, transparent);
+    border-radius: var(--radius-lg);
   }
 
   [data-slot="session-review-large-diff-title"] {

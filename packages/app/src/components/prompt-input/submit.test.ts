@@ -97,7 +97,7 @@ beforeAll(async () => {
 
   mock.module("@/context/permission", () => ({
     usePermission: () => ({
-      enableAutoAccept(sessionID: string, directory: string) {
+      enableAutoAccept: (sessionID: string, directory: string) => {
         enabledAutoAccept.push({ sessionID, directory })
       },
     }),

@@ -454,6 +454,26 @@ export function resolveThemeVariant(variant: ThemeVariant, isDark: boolean): Res
     }
   }
 
+  if (!("surface-hover" in overrides)) {
+    tokens["surface-hover"] = tokens["surface-base-hover"]
+  }
+
+  if (!("surface-disabled" in overrides)) {
+    tokens["surface-disabled"] = tokens["input-disabled"]
+  }
+
+  if (!("text-error" in overrides)) {
+    tokens["text-error"] = tokens["text-on-critical-base"]
+  }
+
+  if (!("border-error" in overrides)) {
+    tokens["border-error"] = tokens["border-critical-selected"]
+  }
+
+  if (!("icon-weaker" in overrides)) {
+    tokens["icon-weaker"] = tokens["icon-weak-base"]
+  }
+
   if (!("text-stronger" in overrides)) {
     tokens["text-stronger"] = tokens["text-strong"]
   }

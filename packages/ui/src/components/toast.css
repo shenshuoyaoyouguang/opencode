@@ -30,14 +30,14 @@
 }
 
 [data-component="toast"] {
-  --toast-bg: rgb(12 12 14 / 0.34);
-  --toast-border: rgb(255 255 255 / 0.1);
+  --toast-bg: color-mix(in oklch, var(--surface-float-base) 90%, transparent);
+  --toast-border: color-mix(in oklch, var(--border-weak-base) 82%, transparent);
   --toast-title: var(--text-invert-strong);
   --toast-text: var(--text-invert-base);
-  --toast-icon: var(--text-invert-stronger);
+  --toast-icon: var(--text-invert-strong);
   --toast-action: var(--text-invert-weak);
   --toast-action-strong: var(--text-invert-strong);
-  --toast-progress: rgb(255 255 255 / 0.2);
+  --toast-progress: color-mix(in oklch, var(--text-invert-strong) 22%, transparent);
 
   position: relative;
   display: flex;
@@ -47,46 +47,34 @@
   max-height: min(420px, calc(100dvh - 96px));
   overflow: hidden;
   pointer-events: auto;
-  transition: all 150ms ease-out;
+  transition: all var(--transition-duration, 0.3s) ease-out;
 
   border-radius: var(--radius-lg);
   border: 1px solid var(--toast-border);
   background-color: var(--toast-bg);
   background-clip: padding-box;
-  backdrop-filter: blur(40px) saturate(150%);
-  -webkit-backdrop-filter: blur(40px) saturate(150%);
+  backdrop-filter: blur(28px) saturate(130%);
+  -webkit-backdrop-filter: blur(28px) saturate(130%);
   color: var(--text-invert-base);
   box-shadow: var(--shadow-lg-border-base);
 
   &[data-variant="default"],
   &[data-variant="loading"] {
-    --toast-bg: rgb(12 12 14 / 0.34);
-    --toast-border: rgb(255 255 255 / 0.1);
-    --toast-progress: rgb(255 255 255 / 0.22);
+    --toast-bg: color-mix(in oklch, var(--surface-float-base) 90%, transparent);
+    --toast-border: color-mix(in oklch, var(--border-weak-base) 82%, transparent);
+    --toast-progress: color-mix(in oklch, var(--text-invert-strong) 24%, transparent);
   }
 
   &[data-variant="success"] {
-    --toast-bg: light-dark(
-      color-mix(in oklch, rgb(12 12 14 / 0.34) 76%, var(--surface-success-weak)),
-      color-mix(in oklch, rgb(12 12 14 / 0.42) 82%, var(--surface-success-strong))
-    );
-    --toast-border: light-dark(
-      color-mix(in oklch, rgb(255 255 255 / 0.1) 58%, var(--border-success-base)),
-      color-mix(in oklch, rgb(255 255 255 / 0.14) 64%, var(--border-success-base))
-    );
+    --toast-bg: color-mix(in oklch, var(--surface-float-base) 74%, var(--surface-success-weak));
+    --toast-border: color-mix(in oklch, var(--border-weak-base) 42%, var(--border-success-base));
     --toast-icon: var(--icon-success-base);
     --toast-progress: var(--icon-success-base);
   }
 
   &[data-variant="error"] {
-    --toast-bg: light-dark(
-      color-mix(in oklch, rgb(12 12 14 / 0.32) 72%, var(--surface-warning-weak)),
-      color-mix(in oklch, rgb(12 12 14 / 0.4) 80%, var(--surface-warning-strong))
-    );
-    --toast-border: light-dark(
-      color-mix(in oklch, rgb(255 255 255 / 0.1) 52%, var(--border-warning-base)),
-      color-mix(in oklch, rgb(255 255 255 / 0.14) 58%, var(--border-warning-base))
-    );
+    --toast-bg: color-mix(in oklch, var(--surface-float-base) 74%, var(--surface-warning-weak));
+    --toast-border: color-mix(in oklch, var(--border-weak-base) 42%, var(--border-warning-base));
     --toast-icon: light-dark(var(--icon-on-warning-base), var(--icon-warning-base));
     --toast-progress: light-dark(var(--icon-on-warning-base), var(--icon-warning-base));
   }
@@ -98,11 +86,11 @@
   }
 
   &[data-opened] {
-    animation: toastPopIn 150ms ease-out;
+    animation: toastPopIn var(--transition-duration, 0.3s) ease-out;
   }
 
   &[data-closed] {
-    animation: toastPopOut 100ms ease-in forwards;
+    animation: toastPopOut calc(var(--transition-duration, 0.3s) * 0.45) ease-in forwards;
   }
 
   &[data-swipe="move"] {
@@ -238,11 +226,11 @@
 
       &:hover:not(:disabled),
       &:focus-visible:not(:disabled) {
-        background-color: rgb(255 255 255 / 0.08);
+        background-color: color-mix(in oklch, var(--text-invert-strong) 8%, transparent);
       }
 
       &:active:not(:disabled) {
-        background-color: rgb(255 255 255 / 0.12);
+        background-color: color-mix(in oklch, var(--text-invert-strong) 12%, transparent);
       }
 
       &:hover:not(:disabled) [data-slot="icon-svg"],
@@ -259,7 +247,7 @@
     left: 0;
     right: 0;
     height: 3px;
-    background-color: rgb(255 255 255 / 0.08);
+    background-color: color-mix(in oklch, var(--text-invert-strong) 8%, transparent);
     border-radius: 0 0 var(--radius-lg) var(--radius-lg);
     overflow: hidden;
   }

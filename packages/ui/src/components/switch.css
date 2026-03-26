@@ -27,8 +27,8 @@
     border: 1px solid var(--border-weak-base);
     background: var(--surface-base);
     transition:
-      background-color 150ms,
-      border-color 150ms;
+      background-color calc(var(--transition-duration, 0.3s) * 0.5),
+      border-color calc(var(--transition-duration, 0.3s) * 0.5);
   }
 
   [data-slot="switch-thumb"] {
@@ -48,8 +48,8 @@
 
     transform: translateX(-1px);
     transition:
-      transform 150ms,
-      background-color 150ms;
+      transform calc(var(--transition-duration, 0.3s) * 0.5),
+      background-color calc(var(--transition-duration, 0.3s) * 0.5);
   }
 
   [data-slot="switch-label"] {

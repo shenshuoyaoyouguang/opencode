@@ -70,7 +70,7 @@
     }
 
     &:disabled {
-      background-color: var(--icon-strong-disabled);
+      background-color: color-mix(in oklch, var(--surface-disabled) 82%, var(--background-base));
       color: var(--icon-invert-base);
       cursor: not-allowed;
     }

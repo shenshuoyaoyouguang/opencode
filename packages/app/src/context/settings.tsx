@@ -18,6 +18,29 @@ export interface SoundSettings {
   errors: string
 }
 
+export type AnimationSpeed = "slow" | "normal" | "fast" | "none"
+export type InterfaceDensity = "compact" | "normal" | "comfortable"
+export type SidebarPosition = "left" | "right"
+export type MessageAlignment = "left" | "center"
+
+export interface LayoutSettings {
+  sidebarPosition: SidebarPosition
+  sidebarWidth: number
+  messageWidth: number
+  messageAlignment: MessageAlignment
+  showAgentMetadata: boolean
+  showTimestamps: boolean
+  showAvatar: boolean
+  collapseSystemMessages: boolean
+}
+
+export interface AnimationSettings {
+  speed: AnimationSpeed
+  enableTransitions: boolean
+  enableScrollAnimations: boolean
+  reduceMotion: boolean
+}
+
 export interface Settings {
   general: {
     autoSave: boolean
@@ -36,7 +59,13 @@ export interface Settings {
     font: string
     zoomLevel: number
     contentWidth: number
+    interfaceDensity: InterfaceDensity
+    lineHeight: number
+    letterSpacing: number
+    borderRadius: number
   }
+  layout: LayoutSettings
+  animations: AnimationSettings
   keybinds: Record<string, string>
   permissions: {
     autoApprove: boolean
@@ -62,7 +91,27 @@ const defaultSettings: Settings = {
     fontSize: 14,
     font: "ibm-plex-mono",
     zoomLevel: 1,
-    contentWidth: 300, // Default max-w-300 (1200px)
+    contentWidth: 300,
+    interfaceDensity: "normal",
+    lineHeight: 1.5,
+    letterSpacing: 0,
+    borderRadius: 8,
+  },
+  layout: {
+    sidebarPosition: "left",
+    sidebarWidth: 280,
+    messageWidth: 100,
+    messageAlignment: "center",
+    showAgentMetadata: true,
+    showTimestamps: true,
+    showAvatar: true,
+    collapseSystemMessages: false,
+  },
+  animations: {
+    speed: "normal",
+    enableTransitions: true,
+    enableScrollAnimations: true,
+    reduceMotion: false,
   },
   keybinds: {},
   permissions: {
@@ -146,6 +195,77 @@ export const { use: useSettings, provider: SettingsProvider } = createSimpleCont
       document.documentElement.style.setProperty("--session-content-width", `${effectiveWidth * 0.25}rem`)
     })
 
+    // Interface density effect
+    createEffect(() => {
+      if (typeof document === "undefined") return
+      const density = store.appearance?.interfaceDensity ?? defaultSettings.appearance.interfaceDensity
+      document.documentElement.dataset.density = density
+      const spacing = density === "compact" ? "0.5rem" : density === "comfortable" ? "1.25rem" : "0.875rem"
+      document.documentElement.style.setProperty("--ui-spacing", spacing)
+    })
+
+    // Line height effect
+    createEffect(() => {
+      if (typeof document === "undefined") return
+      const lineHeight = store.appearance?.lineHeight ?? defaultSettings.appearance.lineHeight
+      document.documentElement.style.setProperty("--line-height", String(lineHeight))
+    })
+
+    // Letter spacing effect
+    createEffect(() => {
+      if (typeof document === "undefined") return
+      const letterSpacing = store.appearance?.letterSpacing ?? defaultSettings.appearance.letterSpacing
+      document.documentElement.style.setProperty("--letter-spacing", `${letterSpacing}px`)
+    })
+
+    // Border radius effect
+    createEffect(() => {
+      if (typeof document === "undefined") return
+      const borderRadius = store.appearance?.borderRadius ?? defaultSettings.appearance.borderRadius
+      document.documentElement.style.setProperty("--border-radius", `${borderRadius}px`)
+    })
+
+    // Animation effects
+    createEffect(() => {
+      if (typeof document === "undefined") return
+      const speed = store.animations?.speed ?? defaultSettings.animations.speed
+      const enableTransitions = store.animations?.enableTransitions ?? defaultSettings.animations.enableTransitions
+      const reduceMotion = store.animations?.reduceMotion ?? defaultSettings.animations.reduceMotion
+
+      // Apply animation speed
+      const duration = speed === "slow" ? "0.5s" : speed === "fast" ? "0.15s" : "0.3s"
+      document.documentElement.style.setProperty("--transition-duration", duration)
+      document.documentElement.style.setProperty("--animation-speed", speed)
+
+      // Apply reduced motion preference
+      if (reduceMotion) {
+        document.documentElement.classList.add("reduce-motion")
+      } else {
+        document.documentElement.classList.remove("reduce-motion")
+      }
+
+      // Disable transitions if needed
+      if (!enableTransitions) {
+        document.documentElement.classList.add("disable-transitions")
+      } else {
+        document.documentElement.classList.remove("disable-transitions")
+      }
+    })
+
+    // Layout effects
+    createEffect(() => {
+      if (typeof document === "undefined") return
+      const sidebarPosition = store.layout?.sidebarPosition ?? defaultSettings.layout.sidebarPosition
+      document.documentElement.dataset.sidebarPosition = sidebarPosition
+      document.documentElement.style.setProperty("--sidebar-position", sidebarPosition === "right" ? "1" : "0")
+    })
+
+    createEffect(() => {
+      if (typeof document === "undefined") return
+      const messageWidth = store.layout?.messageWidth ?? defaultSettings.layout.messageWidth
+      document.documentElement.style.setProperty("--message-width", `${messageWidth}%`)
+    })
+
     return {
       ready,
       get current() {
@@ -215,6 +335,86 @@ export const { use: useSettings, provider: SettingsProvider } = createSimpleCont
         contentWidth: createMemo(() => store.appearance?.contentWidth ?? defaultSettings.appearance.contentWidth),
         setContentWidth(value: number) {
           setStore("appearance", "contentWidth", value)
+        },
+        interfaceDensity: withFallback(
+          () => store.appearance?.interfaceDensity,
+          defaultSettings.appearance.interfaceDensity,
+        ),
+        setInterfaceDensity(value: InterfaceDensity) {
+          setStore("appearance", "interfaceDensity", value)
+        },
+        lineHeight: withFallback(() => store.appearance?.lineHeight, defaultSettings.appearance.lineHeight),
+        setLineHeight(value: number) {
+          setStore("appearance", "lineHeight", value)
+        },
+        letterSpacing: withFallback(() => store.appearance?.letterSpacing, defaultSettings.appearance.letterSpacing),
+        setLetterSpacing(value: number) {
+          setStore("appearance", "letterSpacing", value)
+        },
+        borderRadius: withFallback(() => store.appearance?.borderRadius, defaultSettings.appearance.borderRadius),
+        setBorderRadius(value: number) {
+          setStore("appearance", "borderRadius", value)
+        },
+      },
+      layout: {
+        sidebarPosition: withFallback(() => store.layout?.sidebarPosition, defaultSettings.layout.sidebarPosition),
+        setSidebarPosition(value: SidebarPosition) {
+          setStore("layout", "sidebarPosition", value)
+        },
+        sidebarWidth: withFallback(() => store.layout?.sidebarWidth, defaultSettings.layout.sidebarWidth),
+        setSidebarWidth(value: number) {
+          setStore("layout", "sidebarWidth", value)
+        },
+        messageWidth: withFallback(() => store.layout?.messageWidth, defaultSettings.layout.messageWidth),
+        setMessageWidth(value: number) {
+          setStore("layout", "messageWidth", value)
+        },
+        messageAlignment: withFallback(() => store.layout?.messageAlignment, defaultSettings.layout.messageAlignment),
+        setMessageAlignment(value: MessageAlignment) {
+          setStore("layout", "messageAlignment", value)
+        },
+        showAgentMetadata: withFallback(() => store.layout?.showAgentMetadata, defaultSettings.layout.showAgentMetadata),
+        setShowAgentMetadata(value: boolean) {
+          setStore("layout", "showAgentMetadata", value)
+        },
+        showTimestamps: withFallback(() => store.layout?.showTimestamps, defaultSettings.layout.showTimestamps),
+        setShowTimestamps(value: boolean) {
+          setStore("layout", "showTimestamps", value)
+        },
+        showAvatar: withFallback(() => store.layout?.showAvatar, defaultSettings.layout.showAvatar),
+        setShowAvatar(value: boolean) {
+          setStore("layout", "showAvatar", value)
+        },
+        collapseSystemMessages: withFallback(
+          () => store.layout?.collapseSystemMessages,
+          defaultSettings.layout.collapseSystemMessages,
+        ),
+        setCollapseSystemMessages(value: boolean) {
+          setStore("layout", "collapseSystemMessages", value)
+        },
+      },
+      animations: {
+        speed: withFallback(() => store.animations?.speed, defaultSettings.animations.speed),
+        setSpeed(value: AnimationSpeed) {
+          setStore("animations", "speed", value)
+        },
+        enableTransitions: withFallback(
+          () => store.animations?.enableTransitions,
+          defaultSettings.animations.enableTransitions,
+        ),
+        setEnableTransitions(value: boolean) {
+          setStore("animations", "enableTransitions", value)
+        },
+        enableScrollAnimations: withFallback(
+          () => store.animations?.enableScrollAnimations,
+          defaultSettings.animations.enableScrollAnimations,
+        ),
+        setEnableScrollAnimations(value: boolean) {
+          setStore("animations", "enableScrollAnimations", value)
+        },
+        reduceMotion: withFallback(() => store.animations?.reduceMotion, defaultSettings.animations.reduceMotion),
+        setReduceMotion(value: boolean) {
+          setStore("animations", "reduceMotion", value)
         },
       },
       keybinds: {

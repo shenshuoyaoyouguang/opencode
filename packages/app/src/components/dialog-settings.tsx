@@ -5,6 +5,9 @@ import { Icon } from "@opencode-ai/ui/icon"
 import { useLanguage } from "@/context/language"
 import { usePlatform } from "@/context/platform"
 import { SettingsGeneral } from "./settings-general"
+import { SettingsAppearance } from "./settings-appearance"
+import { SettingsLayout } from "./settings-layout"
+import { SettingsAnimations } from "./settings-animations"
 import { SettingsKeybinds } from "./settings-keybinds"
 import { SettingsProviders } from "./settings-providers"
 import { SettingsModels } from "./settings-models"
@@ -26,6 +29,18 @@ export const DialogSettings: Component = () => {
                     <Tabs.Trigger value="general">
                       <Icon name="sliders" />
                       {language.t("settings.tab.general")}
+                    </Tabs.Trigger>
+                    <Tabs.Trigger value="appearance">
+                      <Icon name="eye" />
+                      {language.t("settings.tab.appearance")}
+                    </Tabs.Trigger>
+                    <Tabs.Trigger value="layout">
+                      <Icon name="sidebar" />
+                      {language.t("settings.tab.layout")}
+                    </Tabs.Trigger>
+                    <Tabs.Trigger value="animations">
+                      <Icon name="models" />
+                      {language.t("settings.tab.animations")}
                     </Tabs.Trigger>
                     <Tabs.Trigger value="shortcuts">
                       <Icon name="keyboard" />
@@ -57,6 +72,15 @@ export const DialogSettings: Component = () => {
         </Tabs.List>
         <Tabs.Content value="general" class="no-scrollbar">
           <SettingsGeneral />
+        </Tabs.Content>
+        <Tabs.Content value="appearance" class="no-scrollbar">
+          <SettingsAppearance />
+        </Tabs.Content>
+        <Tabs.Content value="layout" class="no-scrollbar">
+          <SettingsLayout />
+        </Tabs.Content>
+        <Tabs.Content value="animations" class="no-scrollbar">
+          <SettingsAnimations />
         </Tabs.Content>
         <Tabs.Content value="shortcuts" class="no-scrollbar">
           <SettingsKeybinds />
